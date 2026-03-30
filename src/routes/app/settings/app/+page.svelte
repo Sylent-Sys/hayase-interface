@@ -139,4 +139,8 @@
   <SettingCard title='Open UI Devtools' description="Open devtools for the UI process, this allows to inspect media playback information, rendering performance and more. DO NOT PASTE ANY CODE IN THERE, YOU'RE LIKELY BEING SCAMMED IF SOMEONE TELLS YOU TO!">
     <Button on:click={native.openUIDevtools} class='btn btn-primary font-bold'>Open Devtools</Button>
   </SettingCard>
+
+  <SettingCard title='Use Internal AniList API' description={"THIS IS VERY UNSAFE AND LIKELY BANNABLE!!!\nDO NOT USE THIS UNLESS YOU KNOW WHAT YOU'RE DOING.\n\nForces the app to use AniList's internal API instead of the public GraphQL API for the current session only. Can be used to debug issues such as CGNAT induced rate limits. This can cause issues in the UI, sync and other parts of the app."}>
+    <Button on:click={native.unsafeUseInternalALAPI} class='btn btn-primary font-bold'>Use Internal API</Button>
+  </SettingCard>
 {/if}
