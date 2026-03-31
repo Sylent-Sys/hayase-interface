@@ -46,6 +46,18 @@ fetch('https://raw.githubusercontent.com/ThaUnknown/filler-scrape/master/filler.
   fillerEpisodes = await res.json()
 })
 
+class ExtensionError extends Error {
+  extension
+  error
+  name = 'ExtensionError'
+
+  constructor (error: Error, extension: string) {
+    super()
+    this.error = error
+    this.extension = extension
+  }
+}
+
 // TODO: these 2 exports need to be moved to a better place
 export interface SingleEpisode {
   episode: number
@@ -211,9 +223,6 @@ export const extensions = new class Extensions {
       exclusions: get(settings).enableExternal ? [] : exclusions
     }
 
-    const results: Array<TorrentResult & { parseObject: AnitomyResult, extension: Set<string> }> = []
-    const errors: Array<{ error: Error, extension: string }> = []
-
     const extopts = get(extensionOptions)
     const configs = get(savedConfigs)
 
@@ -222,32 +231,40 @@ export const extensions = new class Extensions {
 
     debug(`Checking ${extensions.size} extensions for ${media.id}:${media.title?.userPreferred} ${episode} ${resolution} ${checkMovie ? 'movie' : ''} ${checkBatch ? 'batch' : ''}`)
 
-    for (const [id, worker] of extensions.entries()) {
-      const thisExtOpts = extopts[id]!
-      if (!thisExtOpts.enabled) continue
-      if (configs[id]!.type !== 'torrent') continue
-      try {
-        const promises: Array<Promise<TorrentResult[]>> = []
-        promises.push(worker.single(options, thisExtOpts.options))
-        if (checkMovie) promises.push(worker.movie(options, thisExtOpts.options))
-        if (checkBatch) promises.push(worker.batch(options, thisExtOpts.options))
+    // this can take a while, so call it before the extensions so it runs in background
+    const libpromise = native.library()
 
-        for (const result of await Promise.allSettled(promises)) {
-          if (result.status === 'fulfilled') {
-            results.push(...result.value.map(v => ({ ...v, extension: new Set([id]), parseObject: {} as unknown as AnitomyResult })))
-          } else {
-            console.error(result.reason, id)
-            errors.push({ error: result.reason as unknown as Error, extension: id })
+    // call all extensions, at once, with a timeout
+    const { settled, errors } = await toSettled(
+      [...extensions.entries()]
+        .filter(([id]) => extopts[id]?.enabled && configs[id]?.type === 'torrent')
+        .flatMap(([id, worker]) => {
+          try {
+            const extOptions = extopts[id]!.options
+
+            const handle = (fn: typeof worker.single) =>
+              raceWithHandler(
+                fn(options, extOptions),
+                value => value.map(v => ({ ...v, extension: new Set([id]), parseObject: {} as unknown as AnitomyResult })),
+                error => new ExtensionError(error, id)
+              )
+
+            const calls = [worker.single]
+            if (checkMovie) calls.push(worker.movie)
+            if (checkBatch) calls.push(worker.batch)
+
+            return calls.map(handle)
+          } catch (error) {
+            return [Promise.reject(new ExtensionError(error as Error, id))]
           }
-        }
-      } catch (error) {
-        errors.push({ error: error as Error, extension: id })
-      }
-    }
+        })
+    )
 
+    const results = settled.flat()
+
+    // include results from local library if available
     try {
-      const library = await native.library()
-      const entry = library.find(lib => lib.mediaID === media.id && lib.episode === episode)
+      const entry = (await libpromise).find(lib => lib.mediaID === media.id && lib.episode === episode)
       if (entry) {
         results.push({ accuracy: 'medium', date: new Date(entry.date), downloads: 0, hash: entry.hash, extension: new Set(['local']), leechers: 0, link: entry.hash, seeders: 0, size: entry.size, title: entry.name ?? entry.hash, type: entry.files > 1 ? 'batch' : undefined, parseObject: {} as unknown as AnitomyResult })
       }
@@ -259,6 +276,7 @@ export const extensions = new class Extensions {
 
     const deduped = this.dedupe(results)
 
+    // return early if there are no results, no need to update peer counts or call anitomy
     if (!deduped.length) return { results: [], errors }
 
     const parseObjects = await anitomyscript(deduped.map(({ title }) => title))
@@ -354,7 +372,9 @@ export const extensions = new class Extensions {
         dupe.downloads ||= entry.downloads
         dupe.size ||= entry.size
         dupe.date ||= entry.date
-        dupe.type ??= entry.type === 'best' ? 'best' : entry.type === 'alt' ? 'alt' : entry.type
+        dupe.type = (['best', 'alt', 'batch'].indexOf(entry.type ?? 'best') <= ['best', 'alt', 'batch'].indexOf(dupe.type ?? 'best')
+          ? entry.type
+          : dupe.type) ?? entry.type ?? dupe.type
       } else {
         deduped[entry.hash] = entry
       }
@@ -363,3 +383,26 @@ export const extensions = new class Extensions {
     return Object.values(deduped)
   }
 }()
+
+function raceWithHandler<T, U = T> (promise: Promise<T>, settled: (res: T) => U, error: (err: Error) => Error = e => e): Promise<U> {
+  const timeout = new Promise<never>((resolve, reject) => {
+    setTimeout(() => reject(new Error('Timed out after 10 seconds.')), 10_000)
+  })
+
+  return Promise.race([promise, timeout]).then(settled).catch((err: Error) => {
+    throw error(err)
+  })
+}
+
+async function toSettled<U extends ExtensionError, T> (promises: Array<Promise<T>>): Promise<{ settled: T[], errors: U[] }> {
+  const settled: T[] = []
+  const errors: U[] = []
+  for (const settle of await Promise.allSettled(promises)) {
+    if (settle.status === 'fulfilled') {
+      settled.push(settle.value)
+    } else {
+      errors.push(settle.reason as U)
+    }
+  }
+  return { settled, errors }
+}
