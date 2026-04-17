@@ -32,7 +32,7 @@ export function clickwrap (cb: (_: MouseEvent) => unknown = noop) {
     e.stopPropagation()
     e.preventDefault()
     e.stopImmediatePropagation()
-    navigator.vibrate(15)
+    // navigator.vibrate(15)
     cb(e)
   }
 }
@@ -58,7 +58,7 @@ export function click (node: HTMLElement, cb: (_: Event) => unknown = noop) {
   node.addEventListener('click', e => {
     e.stopPropagation()
     e.preventDefault()
-    navigator.vibrate(15)
+    // navigator.vibrate(15)
     cb(e)
   }, ctrl)
   node.addEventListener('keydown', e => {
@@ -102,7 +102,7 @@ export function hover (node: HTMLElement, [cb = noop, hoverUpdate = noop]: [type
     if (inputType.value === 'mouse') return cb()
     if (lastHoverElement === hoverUpdate) {
       lastHoverElement = null
-      navigator.vibrate(15)
+      // navigator.vibrate(15)
       hoverUpdate(false)
       cb()
     } else {
