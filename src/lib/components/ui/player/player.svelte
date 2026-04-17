@@ -19,7 +19,7 @@
   import Volume1 from 'lucide-svelte/icons/volume-1'
   import Volume2 from 'lucide-svelte/icons/volume-2'
   import VolumeX from 'lucide-svelte/icons/volume-x'
-  import { onDestroy, onMount } from 'svelte'
+  import { onDestroy } from 'svelte'
   import { fade } from 'svelte/transition'
   import { persisted } from 'svelte-persisted-store'
   import { toast } from 'svelte-sonner'
@@ -70,8 +70,8 @@
   export let next: (() => void) | undefined = undefined
   // bindings
   // values
-  let videoHeight = 9
-  let videoWidth = 16
+  let videoHeight = 0
+  let videoWidth = 0
   let currentTime = 0
   let seekPercent = 0
   let duration = 1
@@ -94,24 +94,52 @@
 
   // elements
   let fullscreenElement: HTMLElement | null = null
-  let video: HTMLVideoElement
+  let video: Pick<HTMLVideoElement, 'currentTime' | 'play' | 'pause' | 'audioTracks' | 'videoTracks' | 'requestVideoFrameCallback' | 'cancelVideoFrameCallback' |'clientWidth' | 'clientHeight' | 'getVideoPlaybackQuality' | 'playbackRate' | 'load' |'src'>
   let wrapper: HTMLDivElement
+
+  let canvasSource: CanvasImageSource
+  function setSource (video: HTMLVideoElement) {
+    canvasSource = video
+    thumbnailer.setVideo(video)
+    subtitles = new Subs(video, otherFiles, mediaInfo.file)
+
+    return {
+      destroy () {
+        thumbnailer.destroy()
+        subtitles?.destroy()
+      }
+    }
+  }
+
+  $: useMediaBunnyPlayback = $settings.bunnyPlayer
 
   let subtitles: Subs | undefined
   let deband: VideoDeband | undefined
 
   const pip = new PictureInPicture()
-  $: pip._setElements(video, subtitles, deband)
+
+  function setPipVideo (video: HTMLVideoElement, { subtitles, deband }: { subtitles?: Subs, deband?: VideoDeband }) {
+    pip._setElements(video, subtitles, deband)
+    return {
+      update ({ subtitles, deband }: { subtitles?: Subs, deband?: VideoDeband }) {
+        pip._setElements(video, subtitles, deband)
+      },
+      destroy () {
+        pip.destroy()
+      }
+    }
+  }
   const pipElementStore = pip.element
   $: pictureInPictureElement = $pipElementStore
 
   const thumbnailer = new Thumbnailer(mediaInfo.file.url)
-  onMount(() => thumbnailer.setVideo(video))
 
-  onDestroy(() => {
-    pip.destroy()
-    thumbnailer.destroy()
-  })
+  function handleMediaBunnyFallback () {
+    useMediaBunnyPlayback = false
+    toast.error('Mobile playback setup failed', {
+      description: 'Falling back to native playback for this file.'
+    })
+  }
 
   $: if (subtitles?.jassub) subtitles.jassub.timeOffset = Number(subtitleDelay)
 
@@ -155,7 +183,7 @@
   })
 
   function checkAudio () {
-    if ('audioTracks' in HTMLVideoElement.prototype && video.audioTracks) {
+    if (video.audioTracks) {
       if (!video.audioTracks.length) {
         toast.error('Audio Codec Unsupported', {
           description: "This torrent's audio codec is not supported, try a different release by disabling Autoplay Torrents in Torrent settings. You can also use external players like MPV."
@@ -188,6 +216,8 @@
         track.enabled = track.id === id
         playAnimation(track.label)
       }
+
+      if (useMediaBunnyPlayback) return
       seek(-0.2) // stupid fix because video freezes up when chaging tracks
     }
   }
@@ -200,14 +230,14 @@
     }
   }
   function seek (time: number) {
-    // WARN: this causes all subscriptions to video to re-run!!!
-    video.currentTime = currentTime = currentTime + time
-    // currentTime = currentTime + time
-    playAnimation(time > 0 ? 'seekforw' : 'seekback')
+    seekTo(currentTime + time)
   }
   function seekTo (time: number) {
-    video.currentTime = currentTime = time
-    playAnimation(time > currentTime ? 'seekforw' : 'seekback')
+    const oldTime = currentTime
+    currentTime = time
+    // WARN: this causes all subscriptions to video to re-run!!!
+    if (video) video.currentTime = currentTime
+    playAnimation(time > oldTime ? 'seekforw' : 'seekback')
   }
   let wasPaused = false
   function startSeek () {
@@ -225,15 +255,6 @@
 
   $: chaptersHandler.loadChapters(safeduration)
 
-  function createSubtitles (video: HTMLVideoElement) {
-    subtitles = new Subs(video, otherFiles, mediaInfo.file)
-    return {
-      destroy: () => {
-        subtitles?.destroy()
-      }
-    }
-  }
-
   function createDeband (video: HTMLVideoElement, playerDeband: boolean) {
     const create = () => {
       if (deband) return
@@ -249,7 +270,6 @@
 
     const destroy = () => {
       deband?.destroy()
-      deband?.canvas.remove()
       deband = undefined
     }
 
@@ -327,18 +347,18 @@
     const current = findChapter(currentTime, $chapters)
     if (current) {
       if (!current.skippable && (current.end - current.start) > 100) {
-        currentTime = currentTime + 85
+        seekTo(currentTime + 85)
       } else {
         const endtime = current.end + 0.5
-        currentTime = endtime
+        seekTo(endtime)
         currentSkippable = undefined
       }
     } else if (currentTime < 10) {
-      currentTime = 90
+      seekTo(90)
     } else if (safeduration - currentTime < 90) {
-      currentTime = safeduration
+      seekTo(safeduration)
     } else {
-      currentTime = currentTime + 85
+      seekTo(currentTime + 85)
     }
   }
 
@@ -383,9 +403,9 @@
     }
   }
   function getBufferHealth (time: number) {
-    for (let index = video.buffered.length; index--;) {
-      if (time < video.buffered.end(index) && time >= video.buffered.start(index)) {
-        return (video.buffered.end(index) - time) | 0
+    for (const buffer of buffered) {
+      if (time < buffer.end && time >= buffer.start) {
+        return (buffer.end - time) | 0
       }
     }
     return 0
@@ -395,7 +415,7 @@
 
   $: playbackIndex = Math.max(0, Math.floor(currentTime / thumbnailer.interval))
 
-  $: if (readyState && !seekIndex) thumbnailer._paintThumbnail(video, playbackIndex)
+  $: if (readyState && !seekIndex) thumbnailer._paintThumbnail(canvasSource, playbackIndex, videoWidth, videoHeight)
 
   $: native.setMediaSession(mediaInfo.session, mediaInfo.media.id, safeduration)
   $: native.setPositionState({ duration: safeduration, position: Math.min(Math.max(0, currentTime), safeduration), playbackRate: $playbackRate }, readyState === 0 ? 'none' : paused ? 'paused' : 'playing')
@@ -413,8 +433,7 @@
     pip.pip(true)
   })
 
-  let openSubs: () => Promise<void>
-  let openCast: () => Promise<void>
+  let openPath: (path: string[]) => Promise<void>
 
   function cycleSubtitles (e: KeyboardEvent | MouseEvent) {
     if (!subtitles) return
@@ -446,10 +465,13 @@
         break
     }
   }
+  function ss () {
+    screenshot(canvasSource, videoWidth, videoHeight, subtitles)
+  }
   let fitWidth = false
   loadWithDefaults({
     KeyX: {
-      fn: () => screenshot(video, subtitles),
+      fn: ss,
       id: 'screenshot_monitor',
       icon: ScreenShare,
       type: 'icon',
@@ -704,9 +726,9 @@
   function saveAnimeProgress () {
     if (!mediaInfo.media.id || !mediaInfo.episode) return
 
-    if (buffering || paused || video.readyState < 4) return
+    if (buffering || paused || readyState < 4) return
 
-    setAnimeProgress(mediaInfo.media.id, { episode: mediaInfo.episode, currentTime: video.currentTime, safeduration })
+    setAnimeProgress(mediaInfo.media.id, { episode: mediaInfo.episode, currentTime, safeduration })
   }
   const saveProgressLoop = setInterval(saveAnimeProgress, 10000)
   onDestroy(() => clearInterval(saveProgressLoop))
@@ -723,38 +745,97 @@
   function toggleTimeFormat () {
     $timeFormat = $timeFormat === 'negative' ? 'positive' : 'negative'
   }
+
+  let clientWidth = 0
+  let clientHeight = 0
 </script>
 
 <svelte:document bind:fullscreenElement bind:visibilityState use:holdToFF={'key'} />
 
-<div class='size-full relative content-center bg-black overflow-clip text-left touch-none' class:fitWidth class:seeking class:pip={pictureInPictureElement} bind:this={wrapper} on:navigate={() => resetMove(2000)} on:wheel={handleWheel} on:keydown={stopAnimation} on:focusin={stopAnimation} on:pointerenter={stopAnimation} on:pointermove={stopAnimation}>
-  <video class='size-full touch-none' preload='metadata' class:cursor-none={immersed} class:cursor-pointer={isMiniplayer} class:object-cover={fitWidth} class:opacity-0={$settings.playerDeband || seeking || pictureInPictureElement} class:absolute={$settings.playerDeband} class:top-0={$settings.playerDeband}
-    use:createSubtitles
-    use:createDeband={$settings.playerDeband}
-    use:holdToFF={'pointer'}
-    crossorigin='anonymous'
-    src={mediaInfo.file.url}
-    bind:videoHeight
-    bind:videoWidth
-    bind:currentTime
-    bind:duration
-    bind:ended
-    bind:paused
-    bind:muted
-    bind:readyState
-    bind:buffered
-    bind:playbackRate={$playbackRate}
-    bind:volume={exponentialVolume}
-    bind:this={video}
-    on:click={() => isMiniplayer ? goto('/app/player') : playPause()}
-    on:dblclick={fullscreen}
-    on:loadeddata={checkAudio}
-    on:loadedmetadata={loadAnimeProgress}
-    on:timeupdate={checkSkippableChapters}
-    on:timeupdate={checkCompletion}
-    on:loadedmetadata={autoPlay}
-    on:pointermove={() => resetMove()}
-  />
+<div class='size-full relative content-center bg-black overflow-clip text-left touch-none'
+  class:fitWidth class:seeking class:pip={pictureInPictureElement} bind:this={wrapper}
+  on:navigate={() => resetMove(2000)}
+  on:wheel={handleWheel}
+  on:keydown={stopAnimation}
+  on:focusin={stopAnimation}
+  on:pointerenter={stopAnimation}
+  on:pointermove={stopAnimation}
+  on:dragover|preventDefault
+  on:paste={e => subtitles?.handleTransfer(e)}
+  on:drop={e => subtitles?.handleTransfer(e)}
+>
+  {#if useMediaBunnyPlayback}
+    {#await import('./bunnyvideo.svelte') then BunnyVideo}
+      <BunnyVideo.default
+        src={mediaInfo.file.url}
+        {immersed}
+        {isMiniplayer}
+        {fitWidth}
+        {holdToFF}
+        {otherFiles}
+        current={mediaInfo.file}
+        bind:this={video}
+        bind:canvasSource
+        bind:videoHeight
+        bind:videoWidth
+        bind:currentTime
+        bind:duration
+        bind:ended
+        bind:paused
+        bind:muted
+        bind:readyState
+        bind:buffered
+        bind:clientWidth
+        bind:clientHeight
+        bind:subtitles
+        bind:playbackRate={$playbackRate}
+        bind:volume={exponentialVolume}
+        on:fallback={handleMediaBunnyFallback}
+        on:click={() => isMiniplayer ? goto('/app/player') : playPause()}
+        on:dblclick={fullscreen}
+        on:loadeddata={checkAudio}
+        on:loadedmetadata={loadAnimeProgress}
+        on:timeupdate={checkSkippableChapters}
+        on:timeupdate={checkCompletion}
+        on:loadedmetadata={autoPlay}
+        on:pointermove={() => resetMove()}
+        class={cn('size-full touch-none object-contain',
+          immersed && 'cursor-none',
+          isMiniplayer && 'cursor-pointer',
+          fitWidth && 'object-cover'
+        )}
+      />
+    {/await}
+  {:else}
+    <video class='size-full touch-none' preload='metadata' class:cursor-none={immersed} class:cursor-pointer={isMiniplayer} class:object-cover={fitWidth} class:opacity-0={$settings.playerDeband || seeking || pictureInPictureElement} class:absolute={$settings.playerDeband} class:top-0={$settings.playerDeband}
+      use:setSource
+      use:setPipVideo={{ subtitles, deband }}
+      use:createDeband={$settings.playerDeband}
+      use:holdToFF={'pointer'}
+      crossorigin='anonymous'
+      src={mediaInfo.file.url}
+      bind:videoHeight
+      bind:videoWidth
+      bind:currentTime
+      bind:duration
+      bind:ended
+      bind:paused
+      bind:muted
+      bind:readyState
+      bind:buffered
+      bind:playbackRate={$playbackRate}
+      bind:volume={exponentialVolume}
+      bind:this={video}
+      on:click={() => isMiniplayer ? goto('/app/player') : playPause()}
+      on:dblclick={fullscreen}
+      on:loadeddata={checkAudio}
+      on:loadedmetadata={loadAnimeProgress}
+      on:timeupdate={checkSkippableChapters}
+      on:timeupdate={checkCompletion}
+      on:loadedmetadata={autoPlay}
+      on:pointermove={() => resetMove()}
+    />
+  {/if}
   {#if !isMiniplayer}
     <div class='absolute size-full flex items-center justify-center top-0 pointer-events-none'>
       <DownloadStats {immersed} />
@@ -779,7 +860,7 @@
           Subtitle delay: {subtitleDelay} sec
         </div>
       {/if}
-      <Options {wrapper} bind:openSubs {video} {seekTo} {selectAudio} {selectVideo} {fullscreen} chapters={$chapters} {subtitles} {videoFiles} {selectFile} {pip} bind:playbackRate={$playbackRate} bind:subtitleDelay id='player-options-button-top'
+      <Options {wrapper} bind:openPath {video} {seekTo} screenshot={ss} {selectAudio} {selectVideo} {fullscreen} chapters={$chapters} {subtitles} {videoFiles} {selectFile} {pip} bind:playbackRate={$playbackRate} bind:subtitleDelay id='player-options-button-top'
         class='{($settings.minimalPlayerUI || SUPPORTS.isAndroid) ? 'inline-flex' : 'mobile:inline-flex hidden'} p-3 size-12 absolute z-[1] top-4 left-4 bg-black/20 pointer-events-auto transition-opacity delay-150 select:opacity-100 {immersed && 'opacity-0'}' />
       {#if fastForwarding}
         <div class='absolute top-10 font-bold text-sm animate-[fade-in_.4s_ease] flex items-center leading-none bg-black/60 px-4 py-2 rounded-2xl'>x2 <FastForward class='ml-2' size='12' fill='currentColor' /></div>
@@ -861,13 +942,13 @@
         </div>
         <div class='flex gap-2'>
           {#if $playbackRate !== 1 && $playbackRate}
-            <div class='flex justify-center items-center leading-none text-base font-bold px-1 pt-0.5'>
+            <Button class='p-3 size-12 hidden sm:flex leading-none text-base font-bold' variant='ghost' on:click={() => openPath(['rate'])} on:keydown={keywrap(() => openPath(['rate']))} data-up='#player-seekbar'>
               x{$playbackRate?.toFixed(1)}
-            </div>
+            </Button>
           {/if}
-          <Options {fullscreen} {wrapper} {seekTo} bind:openSubs bind:openCast {video} {selectAudio} {selectVideo} chapters={$chapters} {subtitles} {videoFiles} {selectFile} {pip} bind:playbackRate={$playbackRate} bind:subtitleDelay id='player-options-button' />
+          <Options {fullscreen} {wrapper} screenshot={ss} {seekTo} bind:openPath {video} {selectAudio} {selectVideo} chapters={$chapters} {subtitles} {videoFiles} {selectFile} {pip} bind:playbackRate={$playbackRate} bind:subtitleDelay id='player-options-button' />
           {#if subtitles}
-            <Button class='p-3 size-12' variant='ghost' on:click={openSubs} on:keydown={keywrap(openSubs)} data-up='#player-seekbar'>
+            <Button class='p-3 size-12' variant='ghost' on:click={() => openPath(['subs'])} on:keydown={keywrap(() => openPath(['subs']))} data-up='#player-seekbar'>
               <Subtitles size='24px' fill='currentColor' strokeWidth='0' />
             </Button>
           {/if}
@@ -883,7 +964,7 @@
             {/if}
           </Button>
           {#if $displays.length}
-            <Button class='p-3 size-12' variant='ghost' on:click={openCast} on:keydown={keywrap(openCast)} data-up='#player-seekbar'>
+            <Button class='p-3 size-12 hidden sm:flex' variant='ghost' on:click={() => openPath(['cast'])} on:keydown={keywrap(() => openPath(['cast']))} data-up='#player-seekbar'>
               <!-- <Cast size='24px' fill='white' strokeWidth='2' />
             {:else} -->
               <Cast size='24px' strokeWidth='2' />

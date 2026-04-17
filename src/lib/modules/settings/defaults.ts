@@ -43,5 +43,6 @@ export default {
   androidStorageType: 'cache',
   showHentai: false,
   hideSpoilers: false,
-  unsafeWebGPU: false
+  unsafeWebGPU: false,
+  bunnyPlayer: false
 }

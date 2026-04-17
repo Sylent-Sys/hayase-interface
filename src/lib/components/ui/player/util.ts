@@ -46,15 +46,15 @@ export function normalizeSubs (_tracks?: Record<number | string, { meta: { langu
   }, {})
 }
 
-export async function screenshot (video: HTMLVideoElement, subtitles?: Subtitles) {
+export async function screenshot (video: CanvasImageSource, videoWidth: number, videoHeight: number, subtitles?: Subtitles) {
   const canvas = document.createElement('canvas')
   const context = canvas.getContext('2d')
   if (!context) return
-  canvas.width = video.videoWidth
-  canvas.height = video.videoHeight
+  canvas.width = videoWidth
+  canvas.height = videoHeight
   context.drawImage(video, 0, 0)
   if (subtitles?.jassub) {
-    await subtitles.jassub.resize(true, video.videoWidth, video.videoHeight)
+    await subtitles.jassub.resize(true, videoWidth, videoHeight)
     context.drawImage(subtitles.jassub._canvas, 0, 0, canvas.width, canvas.height)
     subtitles.jassub.resize(true)
   }

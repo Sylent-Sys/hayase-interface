@@ -34,7 +34,7 @@ export default class Thumbnailer {
     currentVideo.addEventListener('timeupdate', () => {
       const index = Math.floor(currentVideo.currentTime / this.interval)
       const thumbnail = this.thumbnails[index]
-      if (!thumbnail) this._paintThumbnail(currentVideo, index)
+      if (!thumbnail) this._paintThumbnail(currentVideo, index, currentVideo.videoWidth, currentVideo.videoHeight)
     }, this.ctrl)
   }
 
@@ -92,7 +92,7 @@ export default class Thumbnailer {
   }
 
   // generate and store the thumbnail
-  async _paintThumbnail (video: HTMLVideoElement, index: number, width = video.videoWidth, height = video.videoHeight) {
+  async _paintThumbnail (video: CanvasImageSource, index: number, width: number, height: number) {
     if (this.thumbnails[index]) return this.thumbnails[index]
     if (!width || !height) return undefined
     this.canvas.width = this.size

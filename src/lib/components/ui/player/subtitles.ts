@@ -87,7 +87,8 @@ function detectCJKLanguage (str: string) {
 
 const stylesRx = /^Style:[^,]*/gm
 export default class Subtitles {
-  video: HTMLVideoElement
+  video?: HTMLVideoElement
+  canvas?: HTMLCanvasElement
   selected: ResolvedFile
   fonts: string[]
   jassub: JASSUB | null = null
@@ -96,10 +97,9 @@ export default class Subtitles {
 
   _tracks = writable<Record<number | string, { events: HashMap<{ text: string, time: number, duration: number, style?: string }, ASSEvent>, meta: { language?: string, type: string, header: string, number: string, name?: string }, styles: Record<string | number, number> }>>({})
 
-  ctrl = new AbortController()
-
-  constructor (video: HTMLVideoElement, otherFiles: TorrentFile[], selected: ResolvedFile) {
+  constructor (video: HTMLVideoElement | undefined, otherFiles: TorrentFile[], selected: ResolvedFile, canvas?: HTMLCanvasElement) {
     this.video = video
+    this.canvas = canvas
     this.selected = selected
     this.fonts = [...otherFiles.filter(file => fontRx.test(file.name)).map(file => file.url)]
 
@@ -200,10 +200,6 @@ export default class Subtitles {
       await this.jassub?.ready
       await this.jassub?.renderer.addFonts(urls)
     }).catch(console.error)
-
-    video.parentElement!.addEventListener('drop', e => this.handleTransfer(e), this.ctrl)
-    video.parentElement!.addEventListener('paste', e => this.handleTransfer(e), this.ctrl)
-    video.parentElement!.addEventListener('dragover', e => e.preventDefault(), this.ctrl)
   }
 
   async handleTransfer (e: { dataTransfer?: DataTransfer | null, clipboardData?: DataTransfer | null } & Event) {
@@ -267,6 +263,7 @@ export default class Subtitles {
 
     this.jassub = new JASSUB({
       video: this.video,
+      canvas: this.canvas!,
       subContent: defaultHeader,
       fonts: this.fonts,
       maxRenderHeight: parseInt(this.set.subtitleRenderHeight) || 0,
@@ -398,7 +395,6 @@ export default class Subtitles {
 
   destroy () {
     this.jassub?.destroy()
-    this.ctrl.abort()
     for (const { events } of Object.values(this._tracks.value)) {
       events.clear()
     }

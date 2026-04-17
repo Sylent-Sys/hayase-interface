@@ -126,6 +126,8 @@ export const server = new class ServerClient {
   }
 }()
 
-requestIdleCallback(() => {
-  get(server.library)
-}, { timeout: 120_000 })
+if (typeof requestIdleCallback !== 'undefined') {
+  requestIdleCallback(() => {
+    get(server.library)
+  }, { timeout: 120_000 })
+}

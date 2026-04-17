@@ -15,7 +15,7 @@ import type { AnitomyResult } from 'anitomyscript'
 
 import { dev } from '$app/environment'
 import { savedOptions as extensionOptions, savedConfigs } from '$lib/modules/extensions'
-import { anitomyscript } from '$lib/utils'
+import { anitomyscript, toSettled } from '$lib/utils'
 
 const exclusions: string[] = []
 
@@ -34,8 +34,7 @@ if (!dev) {
   video.remove()
 
   if (!('audioTracks' in HTMLVideoElement.prototype)) {
-    exclusions.push('DUAL AUDIO', 'Dual Audio')
-    exclusions.push('MULTI AUDIO', 'Multi Audio')
+    exclusions.push('DUAL AUDIO', 'Dual Audio', 'MULTI AUDIO', 'Multi Audio')
   }
 }
 const debug = Debug('ui:extensions')
@@ -102,7 +101,7 @@ export function episodeByAirDate (alDate: Date | undefined, episodes: Map<string
 }
 
 export function makeEpisodeList (media: Media, episodesRes?: EpisodesResponse | null) {
-  const count = episodes(media) ?? episodesRes?.episodeCount ?? 0
+  const count = episodes(media) || episodesRes?.episodeCount || 0
   const alSchedule: Record<number, Date | undefined> = {}
 
   for (const { a: airingAt, e: episode } of dedupeAiring(media)) {
@@ -121,7 +120,7 @@ export function makeEpisodeList (media: Media, episodesRes?: EpisodesResponse | 
   }
 
   const hasSpecial = !!episodesRes?.specialCount
-  const hasCountMatch = (episodes(media) ?? 0) === (episodesRes?.episodeCount ?? 0)
+  const hasCountMatch = episodes(media) === (episodesRes?.episodeCount ?? 0)
   for (let episode = 1; episode <= count; episode++) {
     const airingAt = alSchedule[episode]
 
@@ -204,6 +203,8 @@ export const extensions = new class Extensions {
     const { anidbEid, tvdbId: tvdbEId, absoluteEpisodeNumber } = (anidbAid && await this.ALtoAniDBEpisode({ media, episode }, aniDBMeta)) || {}
     debug(`AniDB Mapping: ${anidbAid} ${anidbEid}`)
 
+    const _settings = get(settings)
+
     const options = {
       anilistId: media.id,
       episodeCount: episodes(media),
@@ -220,7 +221,7 @@ export const extensions = new class Extensions {
       absoluteEpisodeNumber,
       titles: this.createTitles(media),
       resolution,
-      exclusions: get(settings).enableExternal ? [] : exclusions
+      exclusions: _settings.enableExternal || _settings.bunnyPlayer ? [] : exclusions
     }
 
     const extopts = get(extensionOptions)
@@ -277,14 +278,14 @@ export const extensions = new class Extensions {
     const deduped = this.dedupe(results)
 
     // return early if there are no results, no need to update peer counts or call anitomy
-    if (!deduped.length) return { results: [], errors }
+    if (!deduped.length) return { results: [], errors: errors as ExtensionError[] }
 
     const parseObjects = await anitomyscript(deduped.map(({ title }) => title))
     parseObjects.forEach((parseObject, index) => {
       deduped[index]!.parseObject = parseObject
     })
 
-    return { results: navigator.onLine ? await this.updatePeerCounts(deduped) : deduped, errors }
+    return { results: navigator.onLine ? await this.updatePeerCounts(deduped) : deduped, errors: errors as ExtensionError[] }
   }
 
   async getNZBResultsFromExtensions (hash: string) {
@@ -392,17 +393,4 @@ function raceWithHandler<T, U = T> (promise: Promise<T>, settled: (res: T) => U,
   return Promise.race([promise, timeout]).then(settled).catch((err: Error) => {
     throw error(err)
   })
-}
-
-async function toSettled<U extends ExtensionError, T> (promises: Array<Promise<T>>): Promise<{ settled: T[], errors: U[] }> {
-  const settled: T[] = []
-  const errors: U[] = []
-  for (const settle of await Promise.allSettled(promises)) {
-    if (settle.status === 'fulfilled') {
-      settled.push(settle.value)
-    } else {
-      errors.push(settle.reason as U)
-    }
-  }
-  return { settled, errors }
 }

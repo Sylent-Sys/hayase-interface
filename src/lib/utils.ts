@@ -355,3 +355,21 @@ export function transferToFileList (e: { dataTransfer?: DataTransfer | null, cli
   })
   return Promise.all(promises)
 }
+
+export async function toSettled<U extends Error, T> (promises: Array<Promise<T>>): Promise<{ settled: T[], errors: U[] }> {
+  const settled: T[] = []
+  const errors: U[] = []
+  for (const settle of await Promise.allSettled(promises)) {
+    if (settle.status === 'fulfilled') {
+      settled.push(settle.value)
+    } else {
+      errors.push(settle.reason as U)
+    }
+  }
+  return { settled, errors }
+}
+
+export async function filterAsync<T> (arr: T[], predicate: (item: T) => Promise<boolean>): Promise<T[]> {
+  const { settled } = await toSettled(arr.map(predicate))
+  return arr.filter((_, i) => settled[i])
+}

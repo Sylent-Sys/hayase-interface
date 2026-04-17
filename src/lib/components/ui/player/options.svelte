@@ -6,7 +6,7 @@
 
   import { activeDisplay, displays } from './castplayer.svelte'
   import Keybinds from './keybinds.svelte'
-  import { normalizeSubs, normalizeTracks, screenshot } from './util'
+  import { normalizeSubs, normalizeTracks } from './util'
 
   import type { Chapter } from './chapters'
   import type PictureInPicture from './pip'
@@ -26,7 +26,7 @@
 
   export let wrapper: HTMLDivElement
 
-  export let video: HTMLVideoElement
+  export let video: Pick<HTMLMediaElement, 'audioTracks' | 'videoTracks'>
 
   export let selectAudio: (id: string) => void
   export let selectVideo: (id: string) => void
@@ -49,16 +49,10 @@
 
   let treeState: Writable<string[]>
 
-  export async function openSubs () {
+  export async function openPath (path: string[]) {
     open = true
     await tick()
-    treeState.set(['subs'])
-  }
-
-  export async function openCast () {
-    open = true
-    await tick()
-    treeState.set(['cast'])
+    treeState.set(path)
   }
 
   let className: HTMLAttributes<HTMLDivElement>['class'] = ''
@@ -90,6 +84,7 @@
       stopProgressBar()
     }
   })
+  export let screenshot: () => void
 </script>
 
 <Dialog.Root portal={wrapper} bind:open>
@@ -117,7 +112,7 @@
         </Keybinds>
       {:else}
         <Tree.Root bind:state={treeState}>
-          {#if 'audioTracks' in HTMLVideoElement.prototype && video.audioTracks?.length}
+          {#if video.audioTracks?.length}
             <Tree.Item>
               <span slot='trigger'>Audio</span>
               <Tree.Sub>
@@ -136,7 +131,7 @@
               </Tree.Sub>
             </Tree.Item>
           {/if}
-          {#if 'videoTracks' in HTMLVideoElement.prototype && video.videoTracks?.length}
+          {#if video.videoTracks?.length}
             <Tree.Item>
               <span slot='trigger'>Video</span>
               <Tree.Sub>
@@ -200,7 +195,7 @@
               </Tree.Sub>
             </Tree.Item>
           {/if}
-          <Tree.Item>
+          <Tree.Item id='rate'>
             <span slot='trigger'>Playback Rate</span>
             <Tree.Sub>
               <Tree.Item active={playbackRate === 0.5} on:click={() => { playbackRate = 0.5; open = false }}>
@@ -255,7 +250,7 @@
               </Tree.Sub>
             </Tree.Item>
           {/if}
-          <Tree.Item on:click={() => screenshot(video, subtitles)}>
+          <Tree.Item on:click={screenshot}>
             Screenshot
           </Tree.Item>
           <Tree.Item on:click={fullscreen} active={!!fullscreenElement}>

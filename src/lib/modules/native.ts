@@ -144,7 +144,7 @@ export default Object.assign<Native, Partial<Native>>({
   downloadProgress: async () => undefined,
   updateProgress: async () => undefined,
   createNZB: async () => undefined,
-  getDisplays: async () => undefined,
+  getDisplays: async (cb) => cb([{ friendlyName: 'Display 1', host: 'display1' }]),
   castPlay: async () => undefined,
   castClose: async () => undefined,
   enableCORS: async () => undefined,

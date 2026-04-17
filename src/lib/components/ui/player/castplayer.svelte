@@ -3,8 +3,8 @@
 
   import native from '$lib/modules/native'
 
-  native.getDisplays(dis => displays.set(dis))
   export const displays = writable<Array<{ friendlyName: string, host: string }>>([])
+  native.getDisplays(dis => displays.set(dis))
 
   const stopCast = (host: string) => {
     native.castClose(host)

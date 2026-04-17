@@ -83,6 +83,11 @@
 <SettingCard let:id title='Auto-Skip Filler' description='Automatically skip filler episodes. This WILL skip ENTIRE episodes.'>
   <Switch {id} bind:checked={$settings.playerSkipFiller} />
 </SettingCard>
+{#if SUPPORTS.isAndroid}
+  <SettingCard let:id title='EXPERIMENTAL: Custom Player Backend' description='Use a custom video player backend nstead of the built-in HTML5 video element. This can improve compatibility on some devices such as support for multi-track or more audio codecs, but is still experimental and might cause issues.'>
+    <Switch {id} bind:checked={$settings.bunnyPlayer} />
+  </SettingCard>
+{/if}
 
 <div class='font-weight-bold text-xl font-bold'>Interface Settings</div>
 <SettingCard let:id title='Minimal UI' description='Forces minimalistic player UI, hides controls.'>
