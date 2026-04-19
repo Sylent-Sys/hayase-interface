@@ -130,9 +130,36 @@ export default Object.assign<Native, Partial<Native>>({
   rescanTorrents: async () => undefined,
   deleteTorrents: async () => undefined,
   library: async () => [],
-  attachments: async () => [],
-  tracks: async () => [],
-  subtitles: async () => undefined,
+  attachments: async (hash, fileId) => {
+    try {
+      const res = await fetch(`/api/attachments/${hash}/${fileId}`)
+      if (!res.ok) return []
+      return await res.json()
+    } catch {
+      return []
+    }
+  },
+  tracks: async (hash, fileId) => {
+    try {
+      const res = await fetch(`/api/tracks/${hash}/${fileId}`)
+      if (!res.ok) return []
+      return await res.json()
+    } catch {
+      return []
+    }
+  },
+  subtitles: async (hash, fileId, cb) => {
+    try {
+      const res = await fetch(`/api/subtitles/${hash}/${fileId}`)
+      if (!res.ok) return
+      const data = await res.json() as { sub: any, track: number }[]
+      for (const { sub, track } of data) {
+        cb(sub, track)
+      }
+    } catch (err) {
+      console.error('Failed to fetch subtitles:', err)
+    }
+  },
   chapters: async () => [
     { start: 5 * 1000, end: 15 * 1000, text: 'OP' },
     { start: 1.0 * 60 * 1000, end: 1.2 * 60 * 1000, text: 'Chapter 1' },

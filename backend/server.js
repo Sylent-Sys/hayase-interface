@@ -3,7 +3,9 @@ import cors from 'cors';
 import os from 'node:os';
 
 import { createProxyMiddleware } from 'http-proxy-middleware';
-import WebTorrent from 'webtorrent';
+import TorrentClient from 'torrent-client';
+import { statSync } from 'node:fs';
+import { join } from 'node:path';
 
 // ─── Critical Error Handling ────────────────────────────────────────────────
 // Catch errors that would normally crash the process to keep the server alive
@@ -14,14 +16,23 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason, promise) => {
   console.error('[CRITICAL] Unhandled Rejection at:', promise, 'reason:', reason);
 });
-
 const app = express();
 
-// Single shared WebTorrent client instance for server lifetime
-const wtClient = new WebTorrent({
+
+let TMP;
+try {
+  TMP = join(statSync('/tmp') && '/tmp', 'webtorrent');
+} catch (err) {
+  TMP = join(os.tmpdir(), 'webtorrent');
+}
+
+// Single shared TorrentClient instance for server lifetime
+const tclient = new TorrentClient({
   torrentPort: 6881,
-  dhtPort: 6882, // Use a different port for DHT to avoid EADDRINUSE
-});
+  dhtPort: 6882,
+}, TMP);
+
+const wtClient = tclient.client;
 
 // Prevent backend crash on WebTorrent errors
 wtClient.on('error', (err) => {
@@ -372,6 +383,44 @@ app.get('/stream/:hash/:fileId', async (req, res) => {
     console.log(`[stream] Metadata finally ready for ${infoHash}! Starting stream.`);
     startStream(torrent);
   });
+});
+
+// ─── Native Bridges: Subtitles, Tracks & Attachments ─────────────────────────
+
+// GET /tracks/:hash/:fileId
+app.get('/tracks/:hash/:fileId', async (req, res) => {
+  const { hash, fileId } = req.params;
+  try {
+    const tracks = await tclient.tracks(hash, parseInt(fileId, 10));
+    res.json(tracks);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /subtitles/:hash/:fileId
+app.get('/subtitles/:hash/:fileId', async (req, res) => {
+  const { hash, fileId } = req.params;
+  try {
+    const subtitles = [];
+    await tclient.subtitles(hash, parseInt(fileId, 10), (sub, track) => {
+      subtitles.push({ sub, track });
+    });
+    res.json(subtitles);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /attachments/:hash/:fileId
+app.get('/attachments/:hash/:fileId', async (req, res) => {
+  const { hash, fileId } = req.params;
+  try {
+    const attachments = await tclient.attachments(hash, parseInt(fileId, 10));
+    res.json(attachments);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────

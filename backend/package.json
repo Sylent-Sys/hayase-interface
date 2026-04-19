@@ -8,15 +8,19 @@
     "start": "node server.js"
   },
   "dependencies": {
+    "abslink": "^1.1.6",
     "cors": "^2.8.5",
     "express": "^4.19.2",
     "http-proxy-middleware": "^3.0.0",
+    "torrent-client": "github:hayase-app/torrent-client",
     "webtorrent": "^2.8.5"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
+      "@thaunknown/yencode",
       "bufferutil",
       "node-datachannel",
+      "protobufjs",
       "utf-8-validate",
       "utp-native"
     ]
