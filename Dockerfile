@@ -1,9 +1,9 @@
-# Use a Node.js Alpine image for the builder stage
-FROM node:24-alpine AS builder
+# Use a Node.js Debian-slim image for the builder stage
+FROM node:24-slim AS builder
 WORKDIR /app
 
-# Aktifkan pnpm menggunakan corepack
-RUN apk add --no-cache git && corepack enable pnpm
+# Enable pnpm using corepack and install git
+RUN apt-get update && apt-get install -y git && corepack enable pnpm
 
 # Salin package.json dan pnpm-lock.yaml (jika ada)
 COPY package.json pnpm-lock.yaml* ./
@@ -19,8 +19,8 @@ RUN pnpm run build
 # Hapus devDependencies untuk production (setara dengan npm prune --production)
 RUN pnpm prune --prod
 
-# Use another Node.js Alpine image for the final stage
-FROM node:24-alpine
+# Use another Node.js Debian-slim image for the final stage
+FROM node:24-slim
 WORKDIR /app
 
 # Install 'serve' statically to serve the SPA

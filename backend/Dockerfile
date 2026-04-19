@@ -1,7 +1,12 @@
-FROM node:24-alpine
+FROM node:24-slim
 
-# Build tools required by webtorrent's native dependency: node-datachannel
-RUN apk add --no-cache python3 make g++ linux-headers
+# Build tools required by webtorrent's native dependencies (Debian/glibc based)
+RUN apt-get update && apt-get install -y \
+    python3 \
+    make \
+    g++ \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
 
