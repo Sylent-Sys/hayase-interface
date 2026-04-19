@@ -97,6 +97,47 @@ app.use('/proxy', (req, res, next) => {
 // GET /torrent/:hash
 // Adds a magnet link (with anime trackers) and waits for metadata, then returns
 // a TorrentFile[] array compatible with the native.ts TorrentFile type.
+app.get('/api/torrent/:hash/status', async (req, res) => {
+  const { hash } = req.params;
+  const infoHash = hash.toLowerCase();
+  
+  const torrent = await wtClient.get(infoHash);
+  if (!torrent) {
+    return res.status(404).json({ error: 'Torrent not found' });
+  }
+
+  res.json({
+    name: torrent.name,
+    progress: torrent.progress,
+    size: {
+      total: torrent.length,
+      downloaded: torrent.downloaded,
+      uploaded: torrent.uploaded
+    },
+    speed: {
+      down: torrent.downloadSpeed,
+      up: torrent.uploadSpeed
+    },
+    time: {
+      remaining: torrent.timeRemaining,
+      elapsed: 0 // WebTorrent doesn't track this directly
+    },
+    peers: {
+      seeders: 0, // WebTorrent doesn't distinguish well without extra plugin
+      leechers: 0,
+      wires: torrent.numPeers
+    },
+    pieces: {
+      total: torrent.pieces ? torrent.pieces.length : 0,
+      size: torrent.pieceLength
+    },
+    hash: torrent.infoHash,
+    ready: torrent.ready,
+    paused: torrent.paused,
+    done: torrent.done
+  });
+});
+
 app.get('/torrent/:hash', (req, res) => {
   const { hash } = req.params;
   const infoHash = hash.toLowerCase();

@@ -22,6 +22,8 @@ async function extractInfoHash (torrent: string | ArrayBufferView): Promise<stri
   return parsed.infoHash
 }
 
+let activeHash = ''
+
 /**
  * Calls the backend WebTorrent service and returns TorrentFile[] for the
  * Svelte video player. Video is served via range-request-capable
@@ -29,6 +31,7 @@ async function extractInfoHash (torrent: string | ArrayBufferView): Promise<stri
  */
 async function fetchTorrentFiles (torrent: string | ArrayBufferView): Promise<TorrentFile[]> {
   const hash = await extractInfoHash(torrent)
+  activeHash = hash
   let url = `/api/torrent/${hash}`
 
   // If we have a full magnet link (from extensions), pass it as a query param
@@ -142,16 +145,37 @@ export default Object.assign<Native, Partial<Native>>({
   castPlay: async () => undefined,
   castClose: async () => undefined,
   enableCORS: async () => undefined,
-  torrentInfo: async (): Promise<TorrentInfo> => ({
-    name: '',
-    progress: 0,
-    size: { total: 0, downloaded: 0, uploaded: 0 },
-    speed: { down: 0, up: 0 },
-    time: { remaining: 0, elapsed: 0 },
-    peers: { seeders: 0, leechers: 0, wires: 0 },
-    pieces: { total: 0, size: 0 },
-    hash: ''
-  }),
+  torrentInfo: async (): Promise<TorrentInfo> => {
+    if (!activeHash) {
+      return {
+        name: '',
+        progress: 0,
+        size: { total: 0, downloaded: 0, uploaded: 0 },
+        speed: { down: 0, up: 0 },
+        time: { remaining: 0, elapsed: 0 },
+        peers: { seeders: 0, leechers: 0, wires: 0 },
+        pieces: { total: 0, size: 0 },
+        hash: ''
+      }
+    }
+    try {
+      const res = await fetch(`/api/torrent/${activeHash}/status`)
+      if (!res.ok) throw new Error('Status fetch failed')
+      return await res.json() as TorrentInfo
+    } catch (err) {
+      console.error('Failed to fetch torrent stats:', err)
+      return {
+        name: '',
+        progress: 0,
+        size: { total: 0, downloaded: 0, uploaded: 0 },
+        speed: { down: 0, up: 0 },
+        time: { remaining: 0, elapsed: 0 },
+        peers: { seeders: 0, leechers: 0, wires: 0 },
+        pieces: { total: 0, size: 0 },
+        hash: activeHash
+      }
+    }
+  },
   fileInfo: async () => [],
   peerInfo: async () => [],
   protocolStatus: async () => ({
