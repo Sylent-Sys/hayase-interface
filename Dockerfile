@@ -23,10 +23,13 @@ RUN pnpm prune --prod
 FROM node:24-alpine
 WORKDIR /app
 
+# Install 'serve' statically to serve the SPA
+RUN npm install -g serve
+
 COPY --from=builder /app/build build/
-COPY --from=builder /app/node_modules node_modules/
-COPY package.json .
 
 EXPOSE 3000
 ENV NODE_ENV=production
-CMD [ "node", "build" ]
+# -s flag is for Single Page Application (redirects 404 to index.html)
+# -l tcp://0.0.0.0:3000 listens on port 3000
+CMD [ "serve", "-s", "build", "-l", "tcp://0.0.0.0:3000" ]
