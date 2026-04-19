@@ -1,0 +1,6 @@
+{
+  "name": "http-tracker",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "../../node_modules/bittorrent-tracker/lib/client/http-tracker.js"
+}
