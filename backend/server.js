@@ -3,6 +3,16 @@ import cors from 'cors';
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import WebTorrent from 'webtorrent';
 
+// ─── Critical Error Handling ────────────────────────────────────────────────
+// Catch errors that would normally crash the process to keep the server alive
+// and provide detailed logs for debugging.
+process.on('uncaughtException', (err) => {
+  console.error('[CRITICAL] Uncaught Exception:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[CRITICAL] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
 const app = express();
 
 // Single shared WebTorrent client instance for server lifetime
@@ -229,6 +239,7 @@ app.get('/stream/:hash/:fileId', (req, res) => {
  * Svelte UI (name, hash, type, size, path, url, lan, id).
  */
 function buildFileList(torrent) {
+  if (!torrent || !torrent.files) return [];
   return torrent.files.map((file, index) => {
     const ext = file.name.split('.').pop()?.toLowerCase();
     const mimeTypes = {
@@ -258,10 +269,7 @@ function buildFileList(torrent) {
 }
 
 const PORT = 4000;
-const server = app.listen(PORT, () => {
+app.listen(PORT, () => {
   console.log(`Backend CORS Proxy + WebTorrent Streaming running on port ${PORT}`);
 });
-
-// Set max listeners to unlimited for the HTTP server to avoid MaxListenersExceededWarning
-// when many concurrent requests add 'close' listeners.
-server.maxListeners = 100;
+process.setMaxListeners(0);
