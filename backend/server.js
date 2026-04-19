@@ -187,12 +187,13 @@ app.get('/torrent/:hash', (req, res) => {
 // GET /stream/:hash/:fileId
 // Streams the selected file bytes as an HTTP Partial Content response so the
 // browser <video> player can seek forward/backward without re-downloading.
-app.get('/stream/:hash/:fileId', (req, res) => {
+app.get('/stream/:hash/:fileId', async (req, res) => {
   const { hash, fileId } = req.params;
   const infoHash = hash.toLowerCase();
   const fileIndex = parseInt(fileId, 10);
 
-  const torrent = wtClient.get(infoHash);
+  // In WebTorrent v2, .get() returns a Promise
+  const torrent = await wtClient.get(infoHash);
   
   if (!torrent) {
     return res.status(404).json({ error: 'Torrent not found. Load it via /torrent/:hash first.' });
