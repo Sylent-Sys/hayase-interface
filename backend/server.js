@@ -28,8 +28,13 @@ try {
 
 // Single shared TorrentClient instance for server lifetime
 const tclient = new TorrentClient({
+  torrentDHT: true,
+  torrentPeX: true,
+  torrentSpeed: 10000, // Default to 1000 Mbps (unlimited enough)
   torrentPort: 6881,
   dhtPort: 6882,
+  maxConns: 55,
+  path: TMP,
 }, TMP);
 
 const wtClient = tclient.client;
@@ -54,7 +59,7 @@ const ANIME_TRACKERS = [
   'udp://nyaa.tracker.wf:7777/announce',
   'udp://anidex.moe:6969/announce',
   'udp://tracker.animereactor.com:80/announce',
-  
+
   // High performance general trackers
   'udp://open.tracker.cl:1337/announce',
   'udp://opentracker.i2p.rocks:6969/announce',
@@ -67,7 +72,7 @@ const ANIME_TRACKERS = [
   'udp://valakas.cyberia.is:6969/announce',
   'udp://9.rarbg.me:2970/announce',
   'udp://9.rarbg.to:2900/announce',
-  
+
   // WebTorrent specific (Websocket)
   'wss://tracker.openwebtorrent.com',
   'wss://tracker.btorrent.xyz',
@@ -162,7 +167,7 @@ app.use('/proxy', (req, res, next) => {
 app.get('/torrent/:hash/status', async (req, res) => {
   const { hash } = req.params;
   const infoHash = hash.toLowerCase();
-  
+
   const torrent = await wtClient.get(infoHash);
   if (!torrent) {
     return res.status(404).json({ error: 'Torrent not found' });
@@ -247,7 +252,7 @@ app.get('/torrent/:hash', (req, res) => {
   // 4. Create and store Promise
   const metadataPromise = new Promise((resolve, reject) => {
     let timeoutId;
-    
+
     const cleanup = () => {
       clearTimeout(timeoutId);
       ongoingMetadatas.delete(infoHash);
@@ -262,7 +267,7 @@ app.get('/torrent/:hash', (req, res) => {
     try {
       wtClient.add(magnet, { announce: ANIME_TRACKERS }, (torrent) => {
         console.log(`[torrent] Metadata found for ${torrent.name}! Peers: ${torrent.numPeers}. Files found: ${torrent.files ? torrent.files.length : 0}`);
-        
+
         // Final safety check: ensure files array is actually populated
         if (!torrent.files || torrent.files.length === 0) {
           console.error(`[torrent] ERROR: Callback fired but files array is empty for ${infoHash}`);
@@ -300,7 +305,7 @@ app.get('/stream/:hash/:fileId', async (req, res) => {
 
   // In WebTorrent v2, .get() returns a Promise
   const torrent = await wtClient.get(infoHash);
-  
+
   if (!torrent) {
     return res.status(404).json({ error: 'Torrent not found. Load it via /torrent/:hash first.' });
   }
@@ -367,7 +372,7 @@ app.get('/stream/:hash/:fileId', async (req, res) => {
 
   // Otherwise, wait for metadata (with a timeout)
   console.log(`[stream] ${infoHash} metadata not ready yet. Waiting...`);
-  
+
   let isDone = false;
   const timeoutId = setTimeout(() => {
     if (isDone) return;
