@@ -37,7 +37,7 @@ const tclient = new TorrentClient({
   path: TMP,
 }, TMP);
 
-const wtClient = tclient.client;
+const wtClient = tclient[Object.getOwnPropertySymbols(tclient).find(s => s.description === 'client')];
 
 // Prevent backend crash on WebTorrent errors
 wtClient.on('error', (err) => {
