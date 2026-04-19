@@ -2,6 +2,7 @@ FROM node:24-slim
 
 # Build tools required by webtorrent's native dependencies (Debian/glibc based)
 RUN apt-get update && apt-get install -y \
+    git \
     python3 \
     make \
     g++ \
