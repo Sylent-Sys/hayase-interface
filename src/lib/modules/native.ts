@@ -1,55 +1,41 @@
 import SUPPORTS from './settings/supports'
 
-import type { AuthResponse, Native, TorrentInfo } from 'native'
+import type { AuthResponse, Native, TorrentFile, TorrentInfo } from 'native'
 
 import { sleep } from '$lib/utils'
 
 const rnd = (range = 100) => Math.floor(Math.random() * range)
 
-const dummyFiles = [
-  {
-    name: 'AmebkuUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUU.webm',
-    hash: '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
-    type: 'video/webm',
-    size: 1234567890,
-    path: '/Amebku.webm',
-    url: 'http://localhost:7344/video.mkv',
-    lan: 'http://localhost:7344/video.mkv',
-    id: 0
+/**
+ * Extracts a hex infoHash string from a torrent argument.
+ * Handles magnet URIs, raw 40-char hex strings, and .torrent file bytes.
+ */
+async function extractInfoHash (torrent: string | ArrayBufferView): Promise<string> {
+  if (typeof torrent === 'string') {
+    const magnetMatch = torrent.match(/urn:btih:([a-fA-F0-9]{40}|[A-Z2-7]{32})/i)
+    if (magnetMatch) return magnetMatch[1].toLowerCase()
+    if (/^[a-fA-F0-9]{40}$/.test(torrent)) return torrent.toLowerCase()
+    return torrent
   }
-// {
-//   name: 'My Happy Marriage Season 2.mkv',
-//   hash: '1234567890abcdef1234567890abcdef1234567890abcdef1234567890abcdef',
-//   type: 'video/mkv',
-//   size: 1234567890,
-//   path: '/video.mkv',
-//   url: '/video.mkv',
-//   id: 1
-// }
-]
-// function makeRandomPeer (): PeerInfo {
-//   const ip = `${rnd(256)}.${rnd(256)}.${rnd(256)}.${rnd(256)}:${rnd(65536)}`
-//   return {
-//     ip,
-//     seeder: Math.random() < 0.5,
-//     client: ['qBittorrent 4.5.4', 'WebTorrent 1.0.0', 'Transmission 3.00', 'Deluge 2.1.1', 'μTorrent 3.5.5', 'Vuze 5.7.7.0', 'Azureus 5.7.6.0'].sort(() => Math.random() - 0.5)[0]!,
-//     progress: Math.random(),
-//     size: {
-//       downloaded: rnd(1000000),
-//       uploaded: rnd(1000000)
-//     },
-//     speed: {
-//       down: rnd(1000),
-//       up: rnd(1000)
-//     },
-//     time: rnd(1000),
-//     flags: (['encrypted', 'utp', 'incoming', 'outgoing'] as const).filter(() => Math.random() < 0.5).slice(0, 3)
-//   }
-// }
-// const dummyPeerInfo: PeerInfo[] = []
-// for (let i = 0; i < 100; i++) {
-//   dummyPeerInfo.push(makeRandomPeer())
-// }
+  const parseTorrent = (await import('parse-torrent')).default
+  const parsed = await (parseTorrent as (buf: Uint8Array) => Promise<{ infoHash: string }>)(torrent as unknown as Uint8Array)
+  return parsed.infoHash
+}
+
+/**
+ * Calls the backend WebTorrent service and returns TorrentFile[] for the
+ * Svelte video player. Video is served via range-request-capable
+ * /api/stream/:hash/:fileId endpoints on the backend.
+ */
+async function fetchTorrentFiles (torrent: string | ArrayBufferView): Promise<TorrentFile[]> {
+  const hash = await extractInfoHash(torrent)
+  const res = await fetch(`/api/torrent/${hash}`)
+  if (!res.ok) {
+    const body = await res.text()
+    throw new Error(`Backend torrent error ${res.status}: ${body}`)
+  }
+  return res.json() as Promise<TorrentFile[]>
+}
 
 function makeAuth<T> (popup: Window | null, callback: (data: { hash: string, search: string }) => T | undefined) {
   return new Promise<T>((resolve, reject) => {
@@ -119,7 +105,7 @@ export default Object.assign<Native, Partial<Native>>({
   checkIncomingConnections: () => new Promise(resolve => setTimeout(() => resolve(false), 1000)),
   updatePeerCounts: async () => [],
   isApp: false,
-  playTorrent: async () => dummyFiles,
+  playTorrent: (torrent: string | ArrayBufferView) => fetchTorrentFiles(torrent),
   rescanTorrents: async () => undefined,
   deleteTorrents: async () => undefined,
   library: async () => [],

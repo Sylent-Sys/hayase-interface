@@ -1,7 +1,8 @@
 FROM node:24-alpine
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+RUN corepack enable
+RUN pnpm install
 COPY server.js .
 EXPOSE 4000
-CMD ["npm", "start"]
+CMD ["pnpm", "start"]
