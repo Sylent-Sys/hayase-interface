@@ -6,24 +6,40 @@ import WebTorrent from 'webtorrent';
 const app = express();
 
 // Single shared WebTorrent client instance for server lifetime
-const wtClient = new WebTorrent();
+const wtClient = new WebTorrent({
+  torrentPort: 6881,
+  dhtPort: 6881,
+});
 wtClient.setMaxListeners(100); // Prevent MaxListenersExceededWarning
 
 // Local map to track ongoing metadata fetches to prevent "Cannot add duplicate torrent" crashes
 const ongoingMetadatas = new Map();
 
-// Popular anime torrent trackers for fast peer discovery... (keep previous list)
+// High-performance public anime and general trackers for rapid peer discovery
 const ANIME_TRACKERS = [
-  'wss://tracker.openwebtorrent.com',
-  'udp://open.tracker.cl:1337',
-  'udp://opentracker.i2p.rocks:6969',
-  'udp://tracker.opentrackr.org:1337',
+  // Anime specific
+  'udp://nyaa.tracker.wf:7777/announce',
+  'udp://anidex.moe:6969/announce',
+  'udp://tracker.animereactor.com:80/announce',
+  
+  // High performance general trackers
+  'udp://open.tracker.cl:1337/announce',
+  'udp://opentracker.i2p.rocks:6969/announce',
+  'udp://tracker.opentrackr.org:1337/announce',
   'http://tracker.opentrackr.org:1337/announce',
-  'udp://exodus.desync.com:6969',
-  'udp://nyaa.tracker.wf:7777',
-  'http://nyaa.tracker.wf:7777/announce',
-  'udp://tracker-udp.gbitt.info:80',
-  'http://tracker.gbitt.info/announce',
+  'udp://exodus.desync.com:6969/announce',
+  'udp://tracker.torrent.eu.org:451/announce',
+  'udp://tracker.moeking.me:6969/announce',
+  'udp://ipv4.tracker.harry.lu:80/announce',
+  'udp://valakas.cyberia.is:6969/announce',
+  'udp://9.rarbg.me:2970/announce',
+  'udp://9.rarbg.to:2900/announce',
+  
+  // WebTorrent specific (Websocket)
+  'wss://tracker.openwebtorrent.com',
+  'wss://tracker.btorrent.xyz',
+  'wss://tracker.files.fm:7073/announce',
+  'wss://tracker.webtorrent.dev',
 ];
 
 app.use(cors());

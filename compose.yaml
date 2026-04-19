@@ -21,6 +21,8 @@ services:
     build:
       context: ./backend
       dockerfile: Dockerfile
-    # Internal routing, not exposed to host
+    ports:
+      - "6881:6881"
+      - "6881:6881/udp"
     expose:
       - "4000"
