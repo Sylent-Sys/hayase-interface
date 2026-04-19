@@ -103,9 +103,22 @@ app.get('/torrent/:hash', (req, res) => {
   const magnetQuery = req.query.magnet;
 
   // 1. Double check ready status
+  // 1. Double check ready status
   const existing = wtClient.get(infoHash);
-  if (existing && existing.files && existing.files.length > 0) {
+  if (existing && existing.ready && existing.files && existing.files.length > 0) {
+    console.log(`[torrent] Returning cached metadata for ${infoHash}`);
     return res.json(buildFileList(existing));
+  }
+
+  // If already fetching, join the existing promise
+  const ongoing = ongoingMetadatas.get(infoHash);
+  if (ongoing) {
+    console.log(`[torrent] Joining ongoing fetch for ${infoHash}`);
+    return ongoing
+      .then(files => res.json(files))
+      .catch(err => {
+        if (!res.headersSent) res.status(504).json({ error: err.message });
+      });
   }
 
   // 2. Atomic Queue Check - prevents double add() calls
@@ -181,73 +194,88 @@ app.get('/stream/:hash/:fileId', (req, res) => {
 
   const torrent = wtClient.get(infoHash);
   
-  // Debug log to catch the race condition
-  console.log(`[stream] Check infoHash: ${infoHash}`, {
-    torrentExists: !!torrent,
-    hasMetadataProperty: torrent ? torrent.metadata : 'N/A',
-    filesArrayExists: !!(torrent && torrent.files),
-    fileCount: torrent && torrent.files ? torrent.files.length : 0,
-    requestedIndex: fileIndex
-  });
-
-  if (!torrent || !torrent.files || torrent.files.length === 0) {
-    return res.status(404).json({ 
-      error: `Torrent metadata not ready or files not found. (Ready: ${torrent ? torrent.metadata : false}, Files: ${torrent && torrent.files ? torrent.files.length : 0})` 
-    });
+  if (!torrent) {
+    return res.status(404).json({ error: 'Torrent not found. Load it via /torrent/:hash first.' });
   }
 
-  const file = torrent.files[fileIndex];
-  if (!file) {
-    return res.status(404).json({ error: `File index ${fileIndex} not found in torrent.` });
-  }
+  // Define the streaming logic as a helper to call once ready
+  const startStream = (t) => {
+    const file = t.files[fileIndex];
+    if (!file) {
+      return res.status(404).json({ error: `File index ${fileIndex} not found in torrent.` });
+    }
 
-  const fileSize = file.length;
-  const rangeHeader = req.headers.range;
+    const fileSize = file.length;
+    const rangeHeader = req.headers.range;
 
-  // Detect MIME type from extension
-  const ext = file.name.split('.').pop()?.toLowerCase();
-  const mimeTypes = {
-    mkv: 'video/x-matroska',
-    mp4: 'video/mp4',
-    webm: 'video/webm',
-    avi: 'video/x-msvideo',
-    mov: 'video/quicktime',
+    // Detect MIME type from extension
+    const ext = file.name.split('.').pop()?.toLowerCase();
+    const mimeTypes = {
+      mkv: 'video/x-matroska',
+      mp4: 'video/mp4',
+      webm: 'video/webm',
+      avi: 'video/x-msvideo',
+      mov: 'video/quicktime',
+    };
+    const contentType = mimeTypes[ext] || 'application/octet-stream';
+
+    if (rangeHeader) {
+      const parts = rangeHeader.replace(/bytes=/, '').split('-');
+      const start = parseInt(parts[0], 10);
+      const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
+      const chunkSize = end - start + 1;
+
+      res.writeHead(206, {
+        'Content-Range': `bytes ${start}-${end}/${fileSize}`,
+        'Accept-Ranges': 'bytes',
+        'Content-Length': chunkSize,
+        'Content-Type': contentType,
+      });
+
+      const stream = file.createReadStream({ start, end });
+      stream.pipe(res);
+      stream.on('error', (err) => {
+        console.error('[stream] Stream error:', err.message);
+        if (!res.headersSent) res.status(500).end();
+      });
+    } else {
+      res.writeHead(200, {
+        'Content-Length': fileSize,
+        'Content-Type': contentType,
+        'Accept-Ranges': 'bytes',
+      });
+      const stream = file.createReadStream();
+      stream.pipe(res);
+      stream.on('error', (err) => {
+        console.error('[stream] Stream error:', err.message);
+        if (!res.headersSent) res.status(500).end();
+      });
+    }
   };
-  const contentType = mimeTypes[ext] || 'application/octet-stream';
 
-  if (rangeHeader) {
-    const parts = rangeHeader.replace(/bytes=/, '').split('-');
-    const start = parseInt(parts[0], 10);
-    const end = parts[1] ? parseInt(parts[1], 10) : fileSize - 1;
-    const chunkSize = end - start + 1;
-
-    res.writeHead(206, {
-      'Content-Range': `bytes ${start}-${end}/${fileSize}`,
-      'Accept-Ranges': 'bytes',
-      'Content-Length': chunkSize,
-      'Content-Type': contentType,
-    });
-
-    const stream = file.createReadStream({ start, end });
-    stream.pipe(res);
-    stream.on('error', (err) => {
-      console.error('[stream] Stream error:', err.message);
-      if (!res.headersSent) res.status(500).end();
-    });
-  } else {
-    // No range — full download
-    res.writeHead(200, {
-      'Content-Length': fileSize,
-      'Content-Type': contentType,
-      'Accept-Ranges': 'bytes',
-    });
-    const stream = file.createReadStream();
-    stream.pipe(res);
-    stream.on('error', (err) => {
-      console.error('[stream] Stream error:', err.message);
-      if (!res.headersSent) res.status(500).end();
-    });
+  // If already ready, start immediately
+  if (torrent.ready && torrent.files && torrent.files.length > 0) {
+    return startStream(torrent);
   }
+
+  // Otherwise, wait for metadata (with a timeout)
+  console.log(`[stream] ${infoHash} metadata not ready yet. Waiting...`);
+  
+  let isDone = false;
+  const timeoutId = setTimeout(() => {
+    if (isDone) return;
+    isDone = true;
+    console.error(`[stream] Timeout waiting for metadata: ${infoHash}`);
+    if (!res.headersSent) res.status(504).json({ error: 'Timeout waiting for torrent metadata.' });
+  }, 30000); // 30s timeout
+
+  torrent.once('ready', () => {
+    if (isDone) return;
+    isDone = true;
+    clearTimeout(timeoutId);
+    console.log(`[stream] Metadata finally ready for ${infoHash}! Starting stream.`);
+    startStream(torrent);
+  });
 });
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
