@@ -97,7 +97,7 @@ app.use('/proxy', (req, res, next) => {
 // GET /torrent/:hash
 // Adds a magnet link (with anime trackers) and waits for metadata, then returns
 // a TorrentFile[] array compatible with the native.ts TorrentFile type.
-app.get('/api/torrent/:hash/status', async (req, res) => {
+app.get('/torrent/:hash/status', async (req, res) => {
   const { hash } = req.params;
   const infoHash = hash.toLowerCase();
   
