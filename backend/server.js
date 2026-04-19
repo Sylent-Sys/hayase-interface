@@ -20,6 +20,11 @@ app.use('/proxy', (req, res, next) => {
     pathRewrite: () => '', // removes the current proxy path before forwarding
     router: () => target, // target the exact URL
     on: {
+      proxyReq: (proxyReq, req, res) => {
+        proxyReq.setHeader('origin', 'https://hayase.app');
+        proxyReq.setHeader('referer', 'https://hayase.app/');
+        proxyReq.setHeader('user-agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) hayase/6.4.58 Chrome/142.0.7444.235 Electron/39.2.7 Safari/537.36');
+      },
       proxyRes: (proxyRes) => {
         proxyRes.headers['Access-Control-Allow-Origin'] = '*';
         proxyRes.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS';

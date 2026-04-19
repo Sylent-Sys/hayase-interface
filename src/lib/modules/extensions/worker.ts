@@ -3,13 +3,17 @@ import { expose } from 'abslink/w3c'
 
 import type { NZBorURLSource, SearchFunction, SearchOptions, TorrentQuery, TorrentSource } from './types'
 
+const _originalFetch = self.fetch;
 const proxiedFetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
   let url = typeof input === 'string' ? input : (input instanceof Request ? input.url : input.href)
   if (url.startsWith('http') && !url.includes('/api/proxy') && !url.includes(location.origin)) {
     url = '/api/proxy?url=' + encodeURIComponent(url)
   }
-  return fetch(url, init)
+  return _originalFetch(url, init)
 }
+
+// Override global fetch in the worker so extension scripts using fetch() directly are intercepted
+self.fetch = proxiedFetch;
 
 export default expose({
   mod: null as unknown as Promise<(TorrentSource | NZBorURLSource) & { url: string }>,

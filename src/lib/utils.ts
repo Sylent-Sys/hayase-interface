@@ -312,6 +312,10 @@ export const fontRx = new RegExp(`.(${fontExtensions.join('|')})$`, 'i')
 
 export const safefetch = async <T> (_fetch: typeof fetch, ...args: Parameters<typeof fetch>): Promise<T | null> => {
   try {
+    let url = typeof args[0] === 'string' ? args[0] : (args[0] instanceof Request ? args[0].url : args[0].href)
+    if (url.startsWith('http') && !url.includes('/api/proxy') && typeof window !== 'undefined' && !url.startsWith(window.location.origin)) {
+      args[0] = '/api/proxy?url=' + encodeURIComponent(url)
+    }
     const res = await _fetch(...args)
     return await res.json()
   } catch (e) {
