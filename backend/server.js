@@ -236,6 +236,10 @@ function buildFileList(torrent) {
 }
 
 const PORT = 4000;
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Backend CORS Proxy + WebTorrent Streaming running on port ${PORT}`);
 });
+
+// Set max listeners to unlimited for the HTTP server to avoid MaxListenersExceededWarning
+// when many concurrent requests add 'close' listeners.
+server.maxListeners = 100;
