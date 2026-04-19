@@ -395,35 +395,56 @@ app.get('/stream/:hash/:fileId', async (req, res) => {
 // GET /tracks/:hash/:fileId
 app.get('/tracks/:hash/:fileId', async (req, res) => {
   const { hash, fileId } = req.params;
+  const infoHash = hash.toLowerCase();
   try {
-    const tracks = await tclient.tracks(hash, parseInt(fileId, 10));
+    const tracks = await tclient.attachments.tracks(infoHash, parseInt(fileId, 10));
     res.json(tracks);
   } catch (err) {
+    console.error(`[tracks] Error: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });
 
-// GET /subtitles/:hash/:fileId
+// GET /subtitles/:hash/:fileId (SSE)
 app.get('/subtitles/:hash/:fileId', async (req, res) => {
   const { hash, fileId } = req.params;
+  const infoHash = hash.toLowerCase();
+
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Access-Control-Allow-Origin': '*'
+  });
+
+  console.log(`[subtitles] SSE connection opened for ${infoHash}/${fileId}`);
+
   try {
-    const subtitles = [];
-    await tclient.subtitles(hash, parseInt(fileId, 10), (sub, track) => {
-      subtitles.push({ sub, track });
+    tclient.attachments.subtitle(infoHash, parseInt(fileId, 10), (subtitle, trackNumber) => {
+      res.write(`data: ${JSON.stringify({ sub: subtitle, track: trackNumber })}\n\n`);
     });
-    res.json(subtitles);
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    console.error(`[subtitles] Error: ${err.message}`);
+    res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
   }
+
+  req.on('close', () => {
+    console.log(`[subtitles] SSE connection closed for ${infoHash}/${fileId}`);
+    // Note: tclient.attachments.subtitle adds a listener to the underlying metadata object.
+    // In the current library implementation (attachments.ts:49), removeAllListeners('subtitle') is called
+    // on next subtitle() call. For more robust cleanup, the library might need patches.
+  });
 });
 
 // GET /attachments/:hash/:fileId
 app.get('/attachments/:hash/:fileId', async (req, res) => {
   const { hash, fileId } = req.params;
+  const infoHash = hash.toLowerCase();
   try {
-    const attachments = await tclient.attachments(hash, parseInt(fileId, 10));
+    const attachments = await tclient.attachments.attachments(infoHash, parseInt(fileId, 10));
     res.json(attachments);
   } catch (err) {
+    console.error(`[attachments] Error: ${err.message}`);
     res.status(500).json({ error: err.message });
   }
 });

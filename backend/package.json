@@ -3,9 +3,9 @@
   "version": "1.0.0",
   "type": "module",
   "description": "CORS Proxy for Hayase Interface",
-  "main": "server.js",
+  "main": "server.ts",
   "scripts": {
-    "start": "tsx server.js"
+    "start": "tsx server.ts"
   },
   "dependencies": {
     "abslink": "^1.1.6",

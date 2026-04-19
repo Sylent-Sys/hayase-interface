@@ -20,7 +20,7 @@ RUN corepack enable
 # pnpm.onlyBuiltDependencies in package.json pre-approves native addon compilation
 RUN pnpm install
 
-COPY server.js .
+COPY server.ts .
 
 EXPOSE 4000
 

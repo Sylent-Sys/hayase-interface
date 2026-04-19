@@ -13,16 +13,18 @@ const rnd = (range = 100) => Math.floor(Math.random() * range)
 async function extractInfoHash (torrent: string | ArrayBufferView): Promise<string> {
   if (typeof torrent === 'string') {
     const magnetMatch = torrent.match(/urn:btih:([a-fA-F0-9]{40}|[A-Z2-7]{32})/i)
-    if (magnetMatch) return magnetMatch[1].toLowerCase()
+    if (!magnetMatch) throw new Error('Invalid torrent format')
+    if (magnetMatch[1]) return magnetMatch[1].toLowerCase()
     if (/^[a-fA-F0-9]{40}$/.test(torrent)) return torrent.toLowerCase()
     return torrent
   }
   const parseTorrent = (await import('parse-torrent')).default
-  const parsed = await (parseTorrent as (buf: Uint8Array) => Promise<{ infoHash: string }>)(torrent as unknown as Uint8Array)
+  const parsed = await (parseTorrent as unknown as (buf: Uint8Array) => Promise<{ infoHash: string }>)(torrent as unknown as Uint8Array)
   return parsed.infoHash
 }
 
 let activeHash = ''
+let activeSubtitlesES: EventSource | null = null
 
 /**
  * Calls the backend WebTorrent service and returns TorrentFile[] for the
@@ -45,7 +47,7 @@ async function fetchTorrentFiles (torrent: string | ArrayBufferView): Promise<To
     const body = await res.text()
     throw new Error(`Backend torrent error ${res.status}: ${body}`)
   }
-  return res.json() as Promise<TorrentFile[]>
+  return await ((res.json()) as Promise<TorrentFile[]>)
 }
 
 function makeAuth<T> (popup: Window | null, callback: (data: { hash: string, search: string }) => T | undefined) {
@@ -150,14 +152,35 @@ export default Object.assign<Native, Partial<Native>>({
   },
   subtitles: async (hash, fileId, cb) => {
     try {
-      const res = await fetch(`/api/subtitles/${hash}/${fileId}`)
-      if (!res.ok) return
-      const data = await res.json() as { sub: any, track: number }[]
-      for (const { sub, track } of data) {
-        cb(sub, track)
+      if (activeSubtitlesES) {
+        activeSubtitlesES.close()
+        activeSubtitlesES = null
+      }
+
+      activeSubtitlesES = new EventSource(`/api/subtitles/${hash}/${fileId}`)
+
+      activeSubtitlesES.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data)
+          if (data.error) {
+            console.error('[subtitles] SSE Error data:', data.error)
+            return
+          }
+          cb(data.sub, data.track)
+        } catch (err) {
+          console.error('[subtitles] Failed to parse message:', err)
+        }
+      }
+
+      activeSubtitlesES.onerror = (err) => {
+        console.error('[subtitles] SSE connection error:', err)
+        if (activeSubtitlesES) {
+          activeSubtitlesES.close()
+          activeSubtitlesES = null
+        }
       }
     } catch (err) {
-      console.error('Failed to fetch subtitles:', err)
+      console.error('[subtitles] Failed to setup SSE:', err)
     }
   },
   chapters: async () => [
