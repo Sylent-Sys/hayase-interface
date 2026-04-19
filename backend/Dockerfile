@@ -13,6 +13,7 @@ WORKDIR /app
 
 COPY package*.json ./
 COPY pnpm-lock.yaml ./
+COPY tsconfig.json ./
 
 RUN corepack enable
 

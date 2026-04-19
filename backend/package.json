@@ -5,7 +5,7 @@
   "description": "CORS Proxy for Hayase Interface",
   "main": "server.js",
   "scripts": {
-    "start": "tsx server.js"
+    "start": "tsx --tsconfig tsconfig.json server.js"
   },
   "dependencies": {
     "abslink": "^1.1.6",
