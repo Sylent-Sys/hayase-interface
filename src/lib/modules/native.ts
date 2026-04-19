@@ -29,7 +29,15 @@ async function extractInfoHash (torrent: string | ArrayBufferView): Promise<stri
  */
 async function fetchTorrentFiles (torrent: string | ArrayBufferView): Promise<TorrentFile[]> {
   const hash = await extractInfoHash(torrent)
-  const res = await fetch(`/api/torrent/${hash}`)
+  let url = `/api/torrent/${hash}`
+
+  // If we have a full magnet link (from extensions), pass it as a query param
+  // so the backend can use the specific trackers found by the extension.
+  if (typeof torrent === 'string' && torrent.startsWith('magnet:?')) {
+    url += `?magnet=${encodeURIComponent(torrent)}`
+  }
+
+  const res = await fetch(url)
   if (!res.ok) {
     const body = await res.text()
     throw new Error(`Backend torrent error ${res.status}: ${body}`)

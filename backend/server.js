@@ -64,30 +64,49 @@ app.use('/proxy', (req, res, next) => {
 app.get('/torrent/:hash', (req, res) => {
   const { hash } = req.params;
   const infoHash = hash.toLowerCase();
+  const magnetQuery = req.query.magnet;
 
-  // Build magnet URI with all anime trackers
-  const trackerParams = ANIME_TRACKERS.map(t => `&tr=${encodeURIComponent(t)}`).join('');
-  const magnet = `magnet:?xt=urn:btih:${infoHash}${trackerParams}`;
+  // 1. Start with either the provided magnet or a fallback
+  let magnet = magnetQuery || `magnet:?xt=urn:btih:${infoHash}`;
 
-  console.log(`[torrent] Loading metadata for ${infoHash}`);
-
-  // Reuse existing torrent if already loaded
-  const existing = wtClient.get(infoHash);
-  if (existing) {
-    return res.json(buildFileList(existing));
-  }
-
-  wtClient.add(magnet, { announce: ANIME_TRACKERS }, (torrent) => {
-    console.log(`[torrent] Metadata ready: ${torrent.name} (${torrent.files.length} files)`);
-    res.json(buildFileList(torrent));
+  // 2. Inject/Merge internal ANIME_TRACKERS specifically for fast peer discovery
+  // We add them even if a magnet was provided to ensure we have the best anime-focused trackers
+  ANIME_TRACKERS.forEach(tracker => {
+    if (!magnet.includes(encodeURIComponent(tracker))) {
+      magnet += `&tr=${encodeURIComponent(tracker)}`;
+    }
   });
 
-  // Timeout if metadata never arrives (e.g. dead torrent)
-  res.setTimeout(60_000, () => {
-    console.error(`[torrent] Metadata timeout for ${infoHash}`);
+  console.log(`[torrent] Loading metadata for ${infoHash}${magnetQuery ? ' (from extension magnet)' : ''}`);
+
+  // Respond once metadata+files are available
+  const respond = (torrent) => {
+    if (res.headersSent) return;
+    clearTimeout(timer);
+    console.log(`[torrent] Metadata ready: ${torrent.name} (${torrent.files?.length ?? 0} files)`);
+    res.json(buildFileList(torrent));
+  };
+
+  // Hard timeout
+  const timer = setTimeout(() => {
     if (!res.headersSent) {
+      console.error(`[torrent] Metadata timeout for ${infoHash}`);
       res.status(504).json({ error: 'Metadata fetch timed out. Torrent may be dead or have no seeders.' });
     }
+  }, 60_000);
+
+  const existing = wtClient.get(infoHash);
+  if (existing) {
+    if (existing.files && existing.files.length > 0) {
+      return respond(existing);
+    }
+    existing.once('ready', () => respond(existing));
+    return;
+  }
+
+  // New torrent
+  wtClient.add(magnet, { announce: ANIME_TRACKERS }, (torrent) => {
+    respond(torrent);
   });
 });
 
