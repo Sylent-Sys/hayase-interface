@@ -12,5 +12,13 @@
     "express": "^4.19.2",
     "http-proxy-middleware": "^3.0.0",
     "webtorrent": "^2.8.5"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "bufferutil",
+      "node-datachannel",
+      "utf-8-validate",
+      "utp-native"
+    ]
   }
 }

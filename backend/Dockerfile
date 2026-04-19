@@ -10,9 +10,8 @@ COPY pnpm-lock.yaml ./
 
 RUN corepack enable
 
-# Install deps and allow native addons (node-datachannel, bufferutil, utp-native, etc.) to compile
+# pnpm.onlyBuiltDependencies in package.json pre-approves native addon compilation
 RUN pnpm install
-RUN pnpm approve-builds --yes
 
 COPY server.js .
 
