@@ -144,7 +144,13 @@ app.get('/torrent/:hash', (req, res) => {
 
     try {
       wtClient.add(magnet, { announce: ANIME_TRACKERS }, (torrent) => {
-        console.log(`[torrent] Metadata found for ${torrent.name}! Peers: ${torrent.numPeers}`);
+        console.log(`[torrent] Metadata found for ${torrent.name}! Peers: ${torrent.numPeers}. Files found: ${torrent.files ? torrent.files.length : 0}`);
+        
+        // Final safety check: ensure files array is actually populated
+        if (!torrent.files || torrent.files.length === 0) {
+          console.error(`[torrent] ERROR: Callback fired but files array is empty for ${infoHash}`);
+        }
+
         cleanup();
         resolve(buildFileList(torrent));
       });
@@ -174,9 +180,19 @@ app.get('/stream/:hash/:fileId', (req, res) => {
   const fileIndex = parseInt(fileId, 10);
 
   const torrent = wtClient.get(infoHash);
+  
+  // Debug log to catch the race condition
+  console.log(`[stream] Check infoHash: ${infoHash}`, {
+    torrentExists: !!torrent,
+    hasMetadataProperty: torrent ? torrent.metadata : 'N/A',
+    filesArrayExists: !!(torrent && torrent.files),
+    fileCount: torrent && torrent.files ? torrent.files.length : 0,
+    requestedIndex: fileIndex
+  });
+
   if (!torrent || !torrent.files || torrent.files.length === 0) {
     return res.status(404).json({ 
-      error: 'Torrent metadata not ready or files not found. Please try again in a few seconds.' 
+      error: `Torrent metadata not ready or files not found. (Ready: ${torrent ? torrent.metadata : false}, Files: ${torrent && torrent.files ? torrent.files.length : 0})` 
     });
   }
 
