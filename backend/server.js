@@ -1,5 +1,7 @@
 import express from 'express';
 import cors from 'cors';
+import os from 'node:os';
+
 import { createProxyMiddleware } from 'http-proxy-middleware';
 import WebTorrent from 'webtorrent';
 
@@ -31,6 +33,10 @@ wtClient.setMaxListeners(100); // Prevent MaxListenersExceededWarning
 // Local map to track ongoing metadata fetches to prevent "Cannot add duplicate torrent" crashes
 const ongoingMetadatas = new Map();
 
+// Local map to track torrent metadata like added time
+const torrentMetadata = new Map();
+
+
 // High-performance public anime and general trackers for rapid peer discovery
 const ANIME_TRACKERS = [
   // Anime specific
@@ -61,6 +67,51 @@ const ANIME_TRACKERS = [
 app.use(cors());
 
 app.get('/health', (req, res) => res.send('OK'));
+
+app.get('/version', (req, res) => {
+  res.json({ version: '6.4.58' });
+});
+
+app.get('/device/info', (req, res) => {
+  const cpus = os.cpus();
+  const { model, speed } = cpus[0] || { model: 'Unknown', speed: 0 };
+  res.json({
+    features: {
+      gpu_0: {
+        vendorId: 0,
+        deviceId: 0,
+        driverVendor: 'Emulated',
+        driverVersion: '1.0'
+      }
+    },
+    cpu: { model, speed },
+    ram: os.totalmem()
+  });
+});
+
+app.get('/protocol/status', (req, res) => {
+  res.json({
+    dht: !!wtClient.dht,
+    lsd: false,
+    pex: true,
+    nat: true,
+    forwarding: false,
+    persisting: true,
+    streaming: true
+  });
+});
+
+app.get('/protocol/status', (req, res) => {
+  res.json({
+    dht: !!wtClient.dht,
+    lsd: false,
+    pex: true,
+    nat: true,
+    forwarding: false,
+    persisting: true,
+    streaming: true
+  });
+});
 
 // ─── CORS Proxy ────────────────────────────────────────────────────────────
 app.use('/proxy', (req, res, next) => {
@@ -120,10 +171,11 @@ app.get('/torrent/:hash/status', async (req, res) => {
     },
     time: {
       remaining: torrent.timeRemaining,
-      elapsed: 0 // WebTorrent doesn't track this directly
+      elapsed: torrentMetadata.has(infoHash) ? Date.now() - torrentMetadata.get(infoHash).added : 0
     },
+
     peers: {
-      seeders: 0, // WebTorrent doesn't distinguish well without extra plugin
+      seeders: torrent.numPeers, // Use connected peers count for seeder display
       leechers: 0,
       wires: torrent.numPeers
     },
@@ -206,8 +258,10 @@ app.get('/torrent/:hash', (req, res) => {
         }
 
         cleanup();
+        torrentMetadata.set(infoHash, { added: Date.now() });
         resolve(buildFileList(torrent));
       });
+
     } catch (err) {
       cleanup();
       reject(err);

@@ -96,7 +96,16 @@ export default Object.assign<Native, Partial<Native>>({
   share: (...args) => navigator.share(...args),
   setAngle: async () => undefined,
   getLogs: async () => '',
-  getDeviceInfo: async () => ({}),
+  getDeviceInfo: async () => {
+    try {
+      const res = await fetch('/api/device/info')
+      if (!res.ok) return {}
+      return await res.json()
+    } catch {
+      return {}
+    }
+  },
+
   openUIDevtools: async () => undefined,
   openTorrentDevtools: async () => undefined,
   minimise: async () => undefined,
@@ -115,6 +124,7 @@ export default Object.assign<Native, Partial<Native>>({
   checkAvailableSpace: () => new Promise(resolve => setTimeout(() => resolve(Math.floor(Math.random() * (1e10 - 1e8 + 1) + 1e8)), 1000)),
   checkIncomingConnections: () => new Promise(resolve => setTimeout(() => resolve(false), 1000)),
   updatePeerCounts: async () => [],
+
   isApp: false,
   playTorrent: (torrent: string | ArrayBufferView) => fetchTorrentFiles(torrent),
   rescanTorrents: async () => undefined,
@@ -128,7 +138,17 @@ export default Object.assign<Native, Partial<Native>>({
     { start: 1.0 * 60 * 1000, end: 1.2 * 60 * 1000, text: 'Chapter 1' },
     { start: 1.4 * 60 * 1000, end: 88 * 1000, text: 'Chapter 2 ' }
   ],
-  version: async () => 'v6.4.4',
+  version: async () => {
+    try {
+      const res = await fetch('/api/version')
+      if (!res.ok) return 'v6.4.4'
+      const data = await res.json()
+      return data.version
+    } catch {
+      return 'v6.4.4'
+    }
+  },
+
   updateSettings: async () => undefined,
   setDOH: async () => undefined,
   cachedTorrents: async () => [],
@@ -178,15 +198,24 @@ export default Object.assign<Native, Partial<Native>>({
   },
   fileInfo: async () => [],
   peerInfo: async () => [],
-  protocolStatus: async () => ({
-    dht: false,
-    lsd: false,
-    pex: false,
-    nat: false,
-    forwarding: false,
-    persisting: false,
-    streaming: false
-  }),
+  protocolStatus: async () => {
+    try {
+      const res = await fetch('/api/protocol/status')
+      if (!res.ok) throw new Error()
+      return await res.json()
+    } catch {
+      return {
+        dht: false,
+        lsd: false,
+        pex: false,
+        nat: false,
+        forwarding: false,
+        persisting: false,
+        streaming: false
+      }
+    }
+  },
+
   defaultTransparency: () => false,
   errors: async () => undefined,
   debug: async () => undefined,
