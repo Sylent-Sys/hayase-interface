@@ -9,6 +9,9 @@ const app = express();
 const wtClient = new WebTorrent();
 wtClient.setMaxListeners(100); // Prevent MaxListenersExceededWarning
 
+// Local map to track ongoing metadata fetches to prevent "Cannot add duplicate torrent" crashes
+const ongoingMetadatas = new Map();
+
 // Popular anime torrent trackers for fast peer discovery... (keep previous list)
 const ANIME_TRACKERS = [
   'wss://tracker.openwebtorrent.com',
@@ -96,14 +99,52 @@ app.get('/torrent/:hash', (req, res) => {
     }
   }, 60_000);
 
+  // Check if we already have this torrent in client and it's ready
   const existing = wtClient.get(infoHash);
   if (existing && existing.files && existing.files.length > 0) {
     return respond(existing);
   }
 
-  wtClient.add(magnet, { announce: ANIME_TRACKERS }, (torrent) => {
-    respond(torrent);
+  // If already being fetched by another request, wait for that one
+  if (ongoingMetadatas.has(infoHash)) {
+    console.log(`[torrent] Request joined existing metadata fetch for ${infoHash}`);
+    ongoingMetadatas.get(infoHash).then(respond).catch(err => {
+      if (!res.headersSent) res.status(500).json({ error: err.message });
+    });
+    return;
+  }
+
+  // Create a new promise for this infoHash and track it
+  const metadataPromise = new Promise((resolve, reject) => {
+    try {
+      wtClient.add(magnet, { announce: ANIME_TRACKERS }, (torrent) => {
+        resolve(torrent);
+      });
+    } catch (err) {
+      // Handle the "duplicate" error gracefully if it somehow still happens
+      if (err.message.includes('duplicate')) {
+        const t = wtClient.get(infoHash);
+        if (t) t.once('metadata', () => resolve(t));
+        else reject(err);
+      } else {
+        reject(err);
+      }
+    }
   });
+
+  ongoingMetadatas.set(infoHash, metadataPromise);
+
+  metadataPromise
+    .then((torrent) => {
+      ongoingMetadatas.delete(infoHash);
+      respond(torrent);
+    })
+    .catch((err) => {
+      ongoingMetadatas.delete(infoHash);
+      if (!res.headersSent) {
+        res.status(500).json({ error: `WebTorrent Error: ${err.message}` });
+      }
+    });
 });
 
 // ─── WebTorrent: Range-based video streaming ────────────────────────────────
