@@ -8,8 +8,14 @@ const app = express();
 // Single shared WebTorrent client instance for server lifetime
 const wtClient = new WebTorrent({
   torrentPort: 6881,
-  dhtPort: 6881,
+  dhtPort: 6882, // Use a different port for DHT to avoid EADDRINUSE
 });
+
+// Prevent backend crash on WebTorrent errors
+wtClient.on('error', (err) => {
+  console.error('[webtorrent] Global error:', err.message);
+});
+
 wtClient.setMaxListeners(100); // Prevent MaxListenersExceededWarning
 
 // Local map to track ongoing metadata fetches to prevent "Cannot add duplicate torrent" crashes
