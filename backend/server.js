@@ -70,80 +70,65 @@ app.get('/torrent/:hash', (req, res) => {
   const infoHash = hash.toLowerCase();
   const magnetQuery = req.query.magnet;
 
-  // 1. Start with either the provided magnet or a fallback
-  let magnet = magnetQuery || `magnet:?xt=urn:btih:${infoHash}`;
-
-  // 2. Inject/Merge internal ANIME_TRACKERS specifically for fast peer discovery
-  // We add them even if a magnet was provided to ensure we have the best anime-focused trackers
-  ANIME_TRACKERS.forEach(tracker => {
-    if (!magnet.includes(encodeURIComponent(tracker))) {
-      magnet += `&tr=${encodeURIComponent(tracker)}`;
-    }
-  });
-
-  console.log(`[torrent] Loading metadata for ${infoHash}${magnetQuery ? ' (from extension magnet)' : ''}`);
-
-  // Respond once metadata+files are available
-  const respond = (torrent) => {
-    if (res.headersSent) return;
-    clearTimeout(timer);
-    console.log(`[torrent] Metadata ready: ${torrent.name} (${torrent.files?.length ?? 0} files)`);
-    res.json(buildFileList(torrent));
-  };
-
-  // Hard timeout
-  const timer = setTimeout(() => {
-    if (!res.headersSent) {
-      console.error(`[torrent] Metadata timeout for ${infoHash}`);
-      res.status(504).json({ error: 'Metadata fetch timed out. Torrent may be dead or have no seeders.' });
-    }
-  }, 60_000);
-
-  // Check if we already have this torrent in client and it's ready
+  // 1. Double check ready status
   const existing = wtClient.get(infoHash);
   if (existing && existing.files && existing.files.length > 0) {
-    return respond(existing);
+    return res.json(buildFileList(existing));
   }
 
-  // If already being fetched by another request, wait for that one
+  // 2. Atomic Queue Check - prevents double add() calls
   if (ongoingMetadatas.has(infoHash)) {
     console.log(`[torrent] Request joined existing metadata fetch for ${infoHash}`);
-    ongoingMetadatas.get(infoHash).then(respond).catch(err => {
-      if (!res.headersSent) res.status(500).json({ error: err.message });
-    });
+    ongoingMetadatas.get(infoHash)
+      .then(files => res.json(files))
+      .catch(err => {
+        if (!res.headersSent) res.status(500).json({ error: err.message });
+      });
     return;
   }
 
-  // Create a new promise for this infoHash and track it
+  console.log(`[torrent] Starting metadata fetch for ${infoHash}`);
+
+  // 3. Build magnet URI
+  let magnet = magnetQuery || `magnet:?xt=urn:btih:${infoHash}`;
+  ANIME_TRACKERS.forEach(t => {
+    if (!magnet.includes(encodeURIComponent(t))) magnet += `&tr=${encodeURIComponent(t)}`;
+  });
+
+  // 4. Create and store Promise
   const metadataPromise = new Promise((resolve, reject) => {
+    let timeoutId;
+    
+    const cleanup = () => {
+      clearTimeout(timeoutId);
+      ongoingMetadatas.delete(infoHash);
+    };
+
+    // Hard timeout for this specific fetch
+    timeoutId = setTimeout(() => {
+      cleanup();
+      reject(new Error('Metadata fetch timed out. No peers found or trackers unreachable.'));
+    }, 60_000);
+
     try {
       wtClient.add(magnet, { announce: ANIME_TRACKERS }, (torrent) => {
-        resolve(torrent);
+        console.log(`[torrent] Metadata found for ${torrent.name}! Peers: ${torrent.numPeers}`);
+        cleanup();
+        resolve(buildFileList(torrent));
       });
     } catch (err) {
-      // Handle the "duplicate" error gracefully if it somehow still happens
-      if (err.message.includes('duplicate')) {
-        const t = wtClient.get(infoHash);
-        if (t) t.once('metadata', () => resolve(t));
-        else reject(err);
-      } else {
-        reject(err);
-      }
+      cleanup();
+      reject(err);
     }
   });
 
   ongoingMetadatas.set(infoHash, metadataPromise);
 
   metadataPromise
-    .then((torrent) => {
-      ongoingMetadatas.delete(infoHash);
-      respond(torrent);
-    })
-    .catch((err) => {
-      ongoingMetadatas.delete(infoHash);
-      if (!res.headersSent) {
-        res.status(500).json({ error: `WebTorrent Error: ${err.message}` });
-      }
+    .then(files => res.json(files))
+    .catch(err => {
+      console.error(`[torrent] Hub error for ${infoHash}: ${err.message}`);
+      if (!res.headersSent) res.status(504).json({ error: err.message });
     });
 });
 
