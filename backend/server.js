@@ -174,8 +174,10 @@ app.get('/stream/:hash/:fileId', (req, res) => {
   const fileIndex = parseInt(fileId, 10);
 
   const torrent = wtClient.get(infoHash);
-  if (!torrent) {
-    return res.status(404).json({ error: 'Torrent not loaded. Call /torrent/:hash first.' });
+  if (!torrent || !torrent.files || torrent.files.length === 0) {
+    return res.status(404).json({ 
+      error: 'Torrent metadata not ready or files not found. Please try again in a few seconds.' 
+    });
   }
 
   const file = torrent.files[fileIndex];
