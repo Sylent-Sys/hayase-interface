@@ -13,8 +13,7 @@ const rnd = (range = 100) => Math.floor(Math.random() * range)
 async function extractInfoHash (torrent: string | ArrayBufferView): Promise<string> {
   if (typeof torrent === 'string') {
     const magnetMatch = torrent.match(/urn:btih:([a-fA-F0-9]{40}|[A-Z2-7]{32})/i)
-    if (!magnetMatch) throw new Error('Invalid torrent format')
-    if (magnetMatch[1]) return magnetMatch[1].toLowerCase()
+    if (magnetMatch) return magnetMatch[1].toLowerCase()
     if (/^[a-fA-F0-9]{40}$/.test(torrent)) return torrent.toLowerCase()
     return torrent
   }

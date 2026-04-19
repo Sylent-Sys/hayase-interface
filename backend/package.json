@@ -27,5 +27,9 @@
       "utf-8-validate",
       "utp-native"
     ]
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6"
   }
 }
