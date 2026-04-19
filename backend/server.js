@@ -7,8 +7,9 @@ const app = express();
 
 // Single shared WebTorrent client instance for server lifetime
 const wtClient = new WebTorrent();
+wtClient.setMaxListeners(100); // Prevent MaxListenersExceededWarning
 
-// Popular anime torrent trackers for fast peer discovery
+// Popular anime torrent trackers for fast peer discovery... (keep previous list)
 const ANIME_TRACKERS = [
   'wss://tracker.openwebtorrent.com',
   'udp://open.tracker.cl:1337',
@@ -96,15 +97,10 @@ app.get('/torrent/:hash', (req, res) => {
   }, 60_000);
 
   const existing = wtClient.get(infoHash);
-  if (existing) {
-    if (existing.files && existing.files.length > 0) {
-      return respond(existing);
-    }
-    existing.once('ready', () => respond(existing));
-    return;
+  if (existing && existing.files && existing.files.length > 0) {
+    return respond(existing);
   }
 
-  // New torrent
   wtClient.add(magnet, { announce: ANIME_TRACKERS }, (torrent) => {
     respond(torrent);
   });
