@@ -1,6 +1,7 @@
 {
   "name": "hayase-backend-proxy",
   "version": "1.0.0",
+  "type": "module",
   "description": "CORS Proxy for Hayase Interface",
   "main": "server.js",
   "scripts": {
