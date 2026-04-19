@@ -3,7 +3,7 @@ FROM node:24-alpine AS builder
 WORKDIR /app
 
 # Aktifkan pnpm menggunakan corepack
-RUN corepack enable pnpm
+RUN apk add --no-cache git && corepack enable pnpm
 
 # Salin package.json dan pnpm-lock.yaml (jika ada)
 COPY package.json pnpm-lock.yaml* ./
