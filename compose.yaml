@@ -7,7 +7,7 @@ services:
       - "80"
     depends_on:
       - frontend
-      - backend
+      - backend-proxy
 
   frontend:
     build:
@@ -17,13 +17,23 @@ services:
     expose:
       - "3000"
 
-  backend:
+  backend-proxy:
     build:
-      context: ./backend
+      context: ./backend/proxy
+      dockerfile: Dockerfile
+    expose:
+      - "4000"
+    environment:
+      - GO_BACKEND_URL=http://backend-torrent:5000
+    depends_on:
+      - backend-torrent
+
+  backend-torrent:
+    build:
+      context: ./backend/torrent
       dockerfile: Dockerfile
     ports:
       - "6881:6881"
       - "6881:6881/udp"
-      - "6882:6882/udp"
     expose:
-      - "4000"
+      - "5000"
