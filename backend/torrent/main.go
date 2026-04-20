@@ -111,6 +111,9 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 	}
 
 	infoHash := t.InfoHash().HexString()
+	
+	log.Printf("[ADD] Successfully added magnet: %s (Hash: %s) with %d files", t.Name(), infoHash, len(files))
+
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"infoHash": infoHash,
