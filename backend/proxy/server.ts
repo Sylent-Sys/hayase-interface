@@ -22,16 +22,45 @@ app.use(cors());
 // Map to uniquely store metadata parsers for specific hash and fileId combinations
 const metadatamap = new Map();
 
+// Mock WebTorrent File for matroska-metadata
+class MockWebTorrentFile extends EventEmitter {
+  name: string;
+  hash: string;
+  fileId: string;
+
+  constructor(hash: string, fileId: string) {
+    super();
+    this.name = `file_${fileId}.mkv`;
+    this.hash = hash;
+    this.fileId = fileId;
+  }
+
+  async *[Symbol.asyncIterator](opts?: { start?: number; end?: number }) {
+    const headers: Record<string, string> = {};
+    if (opts?.start !== undefined) {
+      const end = opts.end !== undefined ? opts.end : '';
+      headers.range = `bytes=${opts.start}-${end}`;
+    }
+
+    const targetUrl = `${GO_BACKEND_URL}/stream/${this.hash}/${this.fileId}`;
+    const res = await fetch(targetUrl, { headers });
+    
+    if (!res.ok && res.status !== 206) {
+      throw new Error(`Backend streaming returned ${res.status}`);
+    }
+
+    if (res.body) {
+      yield* Readable.fromWeb(res.body as import('stream/web').ReadableStream);
+    }
+  }
+}
+
 // Helpers
-function getOrCreateMetadata(hash, fileId) {
+function getOrCreateMetadata(hash: string, fileId: string) {
   const key = `${hash}-${fileId}`;
   if (!metadatamap.has(key)) {
-    // Matroska Metadata expects an object with an EventEmitter interface and a ".name" 
-    const mockFile = new EventEmitter();
-    mockFile.name = `file_${fileId}.mkv`; // Mock name so it parses as mkv
-    
-    // The library casts mockFile directly as an EventEmitter
-    const meta = new Metadata(mockFile);
+    const mockFile = new MockWebTorrentFile(hash, fileId);
+    const meta = new Metadata(mockFile as any);
     metadatamap.set(key, meta);
   }
   return metadatamap.get(key);
