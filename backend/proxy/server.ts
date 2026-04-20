@@ -253,35 +253,23 @@ app.get('/stream/:hash/:fileId', async (req, res) => {
     }
 
     // Convert the web stream to a node stream
-    const nodeStream = Readable.fromWeb(fetchRes.body);
+    const nodeStream = Readable.fromWeb(fetchRes.body as import('stream/web').ReadableStream);
 
-    // Identify if the request asks for specific parts. Subtitles parsing is most robust
-    // when streaming from the beginning since MKV stores attachments heavily in headers/blocks.
-    let isFullStream = !req.headers.range || req.headers.range === 'bytes=0-';
+    // Attach matroska parser transparently to the stream pipe for ALL streams
+    // Use stable=false (default) so it can recover from random seeks
+    const meta = getOrCreateMetadata(hash, fileId);
     
-    if (isFullStream) {
-       // Attach matroska parser transparently to the stream pipe
-       const meta = getOrCreateMetadata(hash, fileId);
-       
-       // intercept stream bytes and push them through parser
-       // `meta.parseStream` requires AsyncIterable and returns AsyncIterable.
-       const interceptedStream = Readable.from(meta.parseStream(nodeStream));
-       
-       // Pipe intercepted readable stream straight to the client
-       interceptedStream.pipe(res);
-       
-       interceptedStream.on('error', (err) => {
-          console.error('[stream intercept] error:', err.message);
-          res.end();
-       });
-    } else {
-       // If it's a seek operation, don't pass through matroska-metadata since it breaks the parser state
-       nodeStream.pipe(res);
-       nodeStream.on('error', (err) => {
-          console.error('[stream proxy] error:', err.message);
-          res.end();
-       });
-    }
+    // intercept stream bytes and push them through parser
+    // `meta.parseStream` requires AsyncIterable and returns AsyncIterable.
+    const interceptedStream = Readable.from(meta.parseStream(nodeStream));
+    
+    // Pipe intercepted readable stream straight to the client
+    interceptedStream.pipe(res);
+    
+    interceptedStream.on('error', (err) => {
+       console.error('[stream intercept] error:', err.message);
+       if (!res.headersSent) res.end();
+    });
 
   } catch (err) {
     console.error('[stream] fetch error:', err.message);
@@ -298,8 +286,10 @@ app.get('/subtitles/:hash/:fileId', async (req, res) => {
     'Content-Type': 'text/event-stream',
     'Cache-Control': 'no-cache',
     'Connection': 'keep-alive',
-    'Access-Control-Allow-Origin': '*'
+    'Access-Control-Allow-Origin': '*',
+    'X-Accel-Buffering': 'no'
   });
+  res.flushHeaders();
 
   console.log(`[subtitles] SSE connection opened for ${hash}/${fileId}`);
 
