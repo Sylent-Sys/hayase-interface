@@ -402,15 +402,15 @@ export const extensions = new class Extensions {
 
 async function raceWithHandler<T, U = T, E = Error> (promise: Promise<T>, settled: (res: T) => U, error: (err: Error) => E = e => e as E): Promise<Awaited<U> | E> {
   const timeout = new Promise<never>((resolve, reject) => {
-    setTimeout(() => reject(new Error('Timed out after 10 seconds.')), 10_000)
+    setTimeout(() => reject(new Error('Timed out after 10 seconds.')), 20_000)
   })
 
   return await Promise.race([promise, timeout]).then(settled).catch(error)
 }
 
-function raceTimeout<T> (promise: Promise<T>, time = 10_000): Promise<T> {
-  const timeout = new Promise<never>((resolve, reject) => {
-    setTimeout(() => reject(new Error(`Request timed out after ${time / 1000} seconds.`)), time)
+function raceTimeout<T> (promise: Promise<T[]>, time = 3_000): Promise<T[]> {
+  const timeout = new Promise<T[]>((resolve, reject) => {
+    setTimeout(() => resolve([]), time)
   })
 
   return Promise.race([promise, timeout])

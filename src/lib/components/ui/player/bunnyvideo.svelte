@@ -131,7 +131,6 @@
   let rafHandle = 0
 
   let canvas: HTMLCanvasElement
-  let subcanvas: HTMLCanvasElement
   let context: CanvasRenderingContext2D | null | undefined
 
   $: canvasSource = canvas
@@ -529,4 +528,4 @@
   use:setupBackend={src}
   {...$$restProps}
 />
-<canvas class='size-full object-contain pointer-events-none absolute inset-0' use:createSubs bind:this={subcanvas} />
+<canvas class='size-full object-contain pointer-events-none absolute inset-0' use:createSubs />
