@@ -14,15 +14,33 @@ import (
 	"github.com/anacrolix/torrent"
 )
 
-var client *torrent.Client
-var speeds sync.Map
+var (
+	client        *torrent.Client
+	stateMu       sync.RWMutex
+	sessions      = map[string]*SessionState{}
+	torrentByHash = map[string]*torrent.Torrent{}
+	torrentRefs   = map[string]int{}
+	speedByHash   = map[string]*SpeedRecord{}
+)
+
+var (
+	maxTorrents     = getEnvInt("MAX_TORRENTS", 200)
+	sessionTTL      = time.Duration(getEnvInt("SESSION_TTL_SECONDS", 1800)) * time.Second
+	cleanupInterval = time.Duration(getEnvInt("CLEANUP_INTERVAL_SECONDS", 300)) * time.Second
+)
 
 type InfoHashString string
 
 type SpeedRecord struct {
+	Mu        sync.Mutex
 	LastBytes int64
 	LastTime  time.Time
 	Speed     float64
+}
+
+type SessionState struct {
+	Torrents map[string]struct{}
+	LastSeen time.Time
 }
 
 // Used to return basic file structure
@@ -50,7 +68,7 @@ type TorrentStatus struct {
 
 func main() {
 	tmpDir := filepath.Join(os.TempDir(), "webtorrent")
-	_ = os.MkdirAll(tmpDir, 0755)
+	_ = os.MkdirAll(tmpDir, 0o755)
 
 	config := torrent.NewDefaultClientConfig()
 	config.DataDir = tmpDir
@@ -65,8 +83,13 @@ func main() {
 	defer client.Close()
 
 	http.HandleFunc("/add", handleAdd)
+	http.HandleFunc("/remove", handleRemove)
+	http.HandleFunc("/remove-all", handleRemoveAll)
 	http.HandleFunc("/status/", handleStatus)
 	http.HandleFunc("/stream/", handleStream)
+	http.HandleFunc("/metrics", handleMetrics)
+
+	go startCleanupWorker()
 
 	log.Println("Torrent service running on port 5000")
 	if err := http.ListenAndServe(":5000", nil); err != nil {
@@ -74,7 +97,154 @@ func main() {
 	}
 }
 
+func getEnvInt(key string, fallback int) int {
+	value := strings.TrimSpace(os.Getenv(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil || parsed <= 0 {
+		return fallback
+	}
+	return parsed
+}
+
+func getSessionID(w http.ResponseWriter, r *http.Request) (string, bool) {
+	sessionID := strings.TrimSpace(r.Header.Get("X-Session-Id"))
+	if sessionID == "" {
+		http.Error(w, "missing X-Session-Id header", http.StatusBadRequest)
+		return "", false
+	}
+	return sessionID, true
+}
+
+func getOrCreateSessionLocked(sessionID string) *SessionState {
+	s, ok := sessions[sessionID]
+	if !ok {
+		s = &SessionState{
+			Torrents: map[string]struct{}{},
+			LastSeen: time.Now(),
+		}
+		sessions[sessionID] = s
+	}
+	s.LastSeen = time.Now()
+	return s
+}
+
+func getTorrentForSession(sessionID string, hash string) (*torrent.Torrent, bool) {
+	stateMu.RLock()
+	defer stateMu.RUnlock()
+	s, ok := sessions[sessionID]
+	if !ok {
+		return nil, false
+	}
+	if _, owns := s.Torrents[hash]; !owns {
+		return nil, false
+	}
+	t, exists := torrentByHash[hash]
+	return t, exists
+}
+
+func releaseTorrentForSession(sessionID string, hash string) bool {
+	var toDrop *torrent.Torrent
+
+	stateMu.Lock()
+	s, ok := sessions[sessionID]
+	if !ok {
+		stateMu.Unlock()
+		return false
+	}
+	if _, owns := s.Torrents[hash]; !owns {
+		stateMu.Unlock()
+		return false
+	}
+
+	delete(s.Torrents, hash)
+	s.LastSeen = time.Now()
+
+	if refs, exists := torrentRefs[hash]; exists {
+		refs--
+		if refs <= 0 {
+			toDrop = torrentByHash[hash]
+			delete(torrentRefs, hash)
+			delete(torrentByHash, hash)
+			delete(speedByHash, hash)
+		} else {
+			torrentRefs[hash] = refs
+		}
+	}
+	stateMu.Unlock()
+
+	if toDrop != nil {
+		toDrop.Drop()
+	}
+	return true
+}
+
+func startCleanupWorker() {
+	ticker := time.NewTicker(cleanupInterval)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		cleanupExpiredSessions()
+	}
+}
+
+func cleanupExpiredSessions() {
+	now := time.Now()
+	toDrop := make([]*torrent.Torrent, 0)
+
+	stateMu.Lock()
+	for sessionID, session := range sessions {
+		if now.Sub(session.LastSeen) <= sessionTTL {
+			continue
+		}
+
+		for hash := range session.Torrents {
+			if refs, ok := torrentRefs[hash]; ok {
+				refs--
+				if refs <= 0 {
+					if t, exists := torrentByHash[hash]; exists {
+						toDrop = append(toDrop, t)
+					}
+					delete(torrentRefs, hash)
+					delete(torrentByHash, hash)
+					delete(speedByHash, hash)
+				} else {
+					torrentRefs[hash] = refs
+				}
+			}
+		}
+
+		delete(sessions, sessionID)
+		log.Printf("[CLEANUP] evicted inactive session %s", sessionID)
+	}
+	stateMu.Unlock()
+
+	for _, t := range toDrop {
+		t.Drop()
+	}
+}
+
+func buildFileList(t *torrent.Torrent) []FileInfo {
+	files := []FileInfo{}
+	for i, f := range t.Files() {
+		files = append(files, FileInfo{
+			Name:   filepath.Base(f.DisplayPath()),
+			Path:   f.DisplayPath(),
+			Length: f.Length(),
+			Index:  i,
+		})
+	}
+	return files
+}
+
 func handleAdd(w http.ResponseWriter, r *http.Request) {
+	sessionID, ok := getSessionID(w, r)
+	if !ok {
+		return
+	}
+
 	magnet := r.URL.Query().Get("magnet")
 	if magnet == "" {
 		http.Error(w, "missing magnet query param", http.StatusBadRequest)
@@ -91,54 +261,115 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 	select {
 	case <-t.GotInfo():
 	case <-time.After(60 * time.Second):
+		t.Drop()
 		http.Error(w, "Timeout waiting for metadata", http.StatusGatewayTimeout)
 		return
 	}
 
-	// Make sure we have a struct for speeds
-	speeds.Store(t.InfoHash().HexString(), &SpeedRecord{
-		LastTime: time.Now(),
-	})
+	hash := t.InfoHash().HexString()
 
-	files := []FileInfo{}
-	for i, f := range t.Files() {
-		files = append(files, FileInfo{
-			Name:   filepath.Base(f.DisplayPath()),
-			Path:   f.DisplayPath(),
-			Length: f.Length(),
-			Index:  i,
-		})
+	stateMu.Lock()
+	session := getOrCreateSessionLocked(sessionID)
+
+	if _, owns := session.Torrents[hash]; !owns {
+		if _, existsGlobal := torrentByHash[hash]; !existsGlobal && len(torrentByHash) >= maxTorrents {
+			stateMu.Unlock()
+			t.Drop()
+			http.Error(w, "maximum torrent capacity reached", http.StatusServiceUnavailable)
+			return
+		}
+
+		if _, existsGlobal := torrentByHash[hash]; !existsGlobal {
+			torrentByHash[hash] = t
+			torrentRefs[hash] = 1
+			speedByHash[hash] = &SpeedRecord{LastTime: time.Now()}
+		} else {
+			torrentRefs[hash]++
+		}
+
+		session.Torrents[hash] = struct{}{}
 	}
 
-	infoHash := t.InfoHash().HexString()
-	
-	log.Printf("[ADD] Successfully added magnet: %s (Hash: %s) with %d files", t.Name(), infoHash, len(files))
+	stateMu.Unlock()
+
+	files := buildFileList(t)
+
+	log.Printf("[ADD] session=%s name=%s hash=%s files=%d", sessionID, t.Name(), hash, len(files))
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(map[string]interface{}{
-		"infoHash": infoHash,
+		"infoHash": hash,
 		"name":     t.Name(),
 		"files":    files,
 	})
 }
 
+func handleRemove(w http.ResponseWriter, r *http.Request) {
+	sessionID, ok := getSessionID(w, r)
+	if !ok {
+		return
+	}
+
+	hash := strings.TrimSpace(r.URL.Query().Get("hash"))
+	if hash == "" {
+		http.Error(w, "missing hash query param", http.StatusBadRequest)
+		return
+	}
+
+	if !releaseTorrentForSession(sessionID, hash) {
+		http.Error(w, "torrent not found for session", http.StatusNotFound)
+		return
+	}
+
+	w.WriteHeader(http.StatusOK)
+	_ = json.NewEncoder(w).Encode(map[string]any{"removed": hash})
+}
+
+func handleRemoveAll(w http.ResponseWriter, r *http.Request) {
+	sessionID, ok := getSessionID(w, r)
+	if !ok {
+		return
+	}
+
+	stateMu.RLock()
+	s, exists := sessions[sessionID]
+	if !exists {
+		stateMu.RUnlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"removed": 0})
+		return
+	}
+	hashes := make([]string, 0, len(s.Torrents))
+	for hash := range s.Torrents {
+		hashes = append(hashes, hash)
+	}
+	stateMu.RUnlock()
+
+	removed := 0
+	for _, hash := range hashes {
+		if releaseTorrentForSession(sessionID, hash) {
+			removed++
+		}
+	}
+
+	_ = json.NewEncoder(w).Encode(map[string]any{"removed": removed})
+}
+
 func handleStatus(w http.ResponseWriter, r *http.Request) {
+	sessionID, ok := getSessionID(w, r)
+	if !ok {
+		return
+	}
+
 	parts := strings.Split(r.URL.Path, "/")
 	if len(parts) < 3 {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
 		return
 	}
 	hash := parts[2]
-	
-	var t *torrent.Torrent
-	for _, tr := range client.Torrents() {
-		if tr.InfoHash().HexString() == hash {
-			t = tr
-			break
-		}
-	}
 
-	if t == nil {
+	t, exists := getTorrentForSession(sessionID, hash)
+
+	if !exists || t == nil {
 		http.Error(w, "Torrent not found", http.StatusNotFound)
 		return
 	}
@@ -147,9 +378,11 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	// Calculate speed
 	var speed float64
-	record, ok := speeds.Load(hash)
-	if ok {
-		rec := record.(*SpeedRecord)
+	stateMu.RLock()
+	rec, hasRec := speedByHash[hash]
+	stateMu.RUnlock()
+	if hasRec {
+		rec.Mu.Lock()
 		now := time.Now()
 		dur := now.Sub(rec.LastTime).Seconds()
 		if dur > 1 {
@@ -160,6 +393,7 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 			speed = rec.Speed
 		}
 		rec.Speed = speed
+		rec.Mu.Unlock()
 	}
 
 	progress := float64(0)
@@ -199,6 +433,11 @@ func handleStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleStream(w http.ResponseWriter, r *http.Request) {
+	sessionID, ok := getSessionID(w, r)
+	if !ok {
+		return
+	}
+
 	parts := strings.Split(r.URL.Path, "/")
 	if len(parts) < 4 {
 		http.Error(w, "Invalid path", http.StatusBadRequest)
@@ -213,15 +452,9 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var t *torrent.Torrent
-	for _, tr := range client.Torrents() {
-		if tr.InfoHash().HexString() == hash {
-			t = tr
-			break
-		}
-	}
+	t, exists := getTorrentForSession(sessionID, hash)
 
-	if t == nil || t.Info() == nil {
+	if !exists || t == nil || t.Info() == nil {
 		http.Error(w, "Torrent or metadata not found", http.StatusNotFound)
 		return
 	}
@@ -232,7 +465,7 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 
 	f := t.Files()[fileId]
-	
+
 	// Create read seeker
 	reader := f.NewReader()
 	// Set reader to give high priority to pieces that are being read
@@ -241,4 +474,19 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 	defer reader.Close()
 
 	http.ServeContent(w, r, filepath.Base(f.DisplayPath()), time.Time{}, reader)
+}
+
+func handleMetrics(w http.ResponseWriter, r *http.Request) {
+	stateMu.RLock()
+	activeSessions := len(sessions)
+	activeTorrents := len(torrentByHash)
+	stateMu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{
+		"activeSessions": activeSessions,
+		"activeTorrents": activeTorrents,
+		"maxTorrents":    maxTorrents,
+		"sessionTTL":     sessionTTL.String(),
+	})
 }
