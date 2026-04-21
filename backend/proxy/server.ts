@@ -29,6 +29,9 @@ const STREAM_CONNECT_TIMEOUT_MS = Number(
   process.env.STREAM_CONNECT_TIMEOUT_MS || 15000,
 );
 const MAX_CONCURRENT_STREAMS = Number(process.env.MAX_CONCURRENT_STREAMS || 40);
+const MAX_CONCURRENT_STREAMS_PER_SESSION = Number(
+  process.env.MAX_CONCURRENT_STREAMS_PER_SESSION || 6,
+);
 const METADATA_CACHE_TTL_MS = Number(
   process.env.METADATA_CACHE_TTL_MS || 10 * 60 * 1000,
 );
@@ -37,6 +40,7 @@ const MAX_METADATA_CACHE_ENTRIES = Number(
 );
 
 let activeStreams = 0;
+const sessionStreamCounts = new Map<string, number>();
 
 app.use(cors());
 
@@ -78,18 +82,34 @@ type AttachmentItem = {
   mimetype: string;
 };
 
+type ProxyMetricsResponse = {
+  activeStreams: number;
+  sessionStreamCountsSize: number;
+  metadataCacheSize: number;
+  limits: {
+    maxConcurrentStreams: number;
+    maxConcurrentStreamsPerSession: number;
+    metadataCacheTtlMs: number;
+    maxMetadataCacheEntries: number;
+  };
+  sessionStreams: Array<{ sessionId: string; activeStreams: number }>;
+  updatedAt: string;
+};
+
 // Bounded cache to avoid unlimited parser growth over time.
 const metadatamap = new Map<string, MetadataEntry>();
 
 // Mock WebTorrent File for matroska-metadata
 class MockWebTorrentFile extends EventEmitter {
   name: string;
+  sessionId: string;
   hash: string;
   fileId: string;
 
-  constructor(hash: string, fileId: string) {
+  constructor(sessionId: string, hash: string, fileId: string) {
     super();
     this.name = `file_${fileId}.mkv`;
+    this.sessionId = sessionId;
     this.hash = hash;
     this.fileId = fileId;
   }
@@ -104,7 +124,9 @@ class MockWebTorrentFile extends EventEmitter {
     const targetUrl = `${GO_BACKEND_URL}/stream/${this.hash}/${this.fileId}`;
     const res = await fetchWithTimeout(
       targetUrl,
-      { headers },
+      {
+        headers: withSessionHeader(this.sessionId, headers),
+      },
       BACKEND_TIMEOUT_MS,
     );
 
@@ -193,9 +215,9 @@ function pruneMetadataCache(now = Date.now()) {
   }
 }
 
-function getOrCreateMetadata(hash: string, fileId: string) {
+function getOrCreateMetadata(sessionId: string, hash: string, fileId: string) {
   pruneMetadataCache();
-  const key = `${hash}-${fileId}`;
+  const key = `${sessionId}-${hash}-${fileId}`;
   const existing = metadatamap.get(key);
   if (existing) {
     existing.lastAccess = Date.now();
@@ -206,12 +228,28 @@ function getOrCreateMetadata(hash: string, fileId: string) {
   }
 
   if (!metadatamap.has(key)) {
-    const mockFile = new MockWebTorrentFile(hash, fileId);
+    const mockFile = new MockWebTorrentFile(sessionId, hash, fileId);
     const meta = new Metadata(mockFile as any);
     metadatamap.set(key, { meta, lastAccess: Date.now() });
     pruneMetadataCache();
   }
   return metadatamap.get(key)?.meta;
+}
+
+function incrementSessionStreams(sessionId: string): number {
+  const current = sessionStreamCounts.get(sessionId) || 0;
+  const next = current + 1;
+  sessionStreamCounts.set(sessionId, next);
+  return next;
+}
+
+function decrementSessionStreams(sessionId: string) {
+  const current = sessionStreamCounts.get(sessionId) || 0;
+  if (current <= 1) {
+    sessionStreamCounts.delete(sessionId);
+    return;
+  }
+  sessionStreamCounts.set(sessionId, current - 1);
 }
 
 // ─── Native API Endpoints ──────────────────────────────────────────────────────
@@ -249,6 +287,28 @@ app.get("/protocol/status", (req, res) => {
     persisting: true,
     streaming: true,
   });
+});
+
+app.get("/metrics", (_req, res) => {
+  const sessionStreams = Array.from(sessionStreamCounts.entries())
+    .map(([sessionId, count]) => ({ sessionId, activeStreams: count }))
+    .sort((a, b) => b.activeStreams - a.activeStreams);
+
+  const payload: ProxyMetricsResponse = {
+    activeStreams,
+    sessionStreamCountsSize: sessionStreamCounts.size,
+    metadataCacheSize: metadatamap.size,
+    limits: {
+      maxConcurrentStreams: MAX_CONCURRENT_STREAMS,
+      maxConcurrentStreamsPerSession: MAX_CONCURRENT_STREAMS_PER_SESSION,
+      metadataCacheTtlMs: METADATA_CACHE_TTL_MS,
+      maxMetadataCacheEntries: MAX_METADATA_CACHE_ENTRIES,
+    },
+    sessionStreams,
+    updatedAt: new Date().toISOString(),
+  };
+
+  res.json(payload);
 });
 
 // ─── CORS Proxy ────────────────────────────────────────────────────────────
@@ -409,15 +469,61 @@ app.get("/torrent/:hash", async (req, res) => {
   }
 });
 
+app.delete("/torrent/:hash", async (req, res) => {
+  const { hash } = req.params;
+  const sessionId = getSessionId(req, res);
+  try {
+    const response = await fetchWithTimeout(
+      `${GO_BACKEND_URL}/remove?hash=${encodeURIComponent(hash)}`,
+      {
+        method: "POST",
+        headers: withSessionHeader(sessionId),
+      },
+    );
+    if (!response.ok) {
+      return res.status(response.status).send(await response.text());
+    }
+    return res.json(await response.json());
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return res.status(500).json({ error: message });
+  }
+});
+
+app.delete("/torrent", async (req, res) => {
+  const sessionId = getSessionId(req, res);
+  try {
+    const response = await fetchWithTimeout(`${GO_BACKEND_URL}/remove-all`, {
+      method: "POST",
+      headers: withSessionHeader(sessionId),
+    });
+    if (!response.ok) {
+      return res.status(response.status).send(await response.text());
+    }
+    return res.json(await response.json());
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return res.status(500).json({ error: message });
+  }
+});
+
 // ─── WebTorrent: Range-based video streaming ────────────────────────────────
 app.get("/stream/:hash/:fileId", async (req, res) => {
+  const sessionId = getSessionId(req, res);
   if (activeStreams >= MAX_CONCURRENT_STREAMS) {
     return res.status(503).json({ error: "stream capacity reached" });
   }
 
+  if (incrementSessionStreams(sessionId) > MAX_CONCURRENT_STREAMS_PER_SESSION) {
+    decrementSessionStreams(sessionId);
+    return res.status(429).json({
+      error: "session stream limit reached",
+      limit: MAX_CONCURRENT_STREAMS_PER_SESSION,
+    });
+  }
+
   activeStreams++;
   const { hash, fileId } = req.params;
-  const sessionId = getSessionId(req, res);
   let cleaned = false;
   let nodeStream: Readable | null = null;
   let interceptedStream: Readable | null = null;
@@ -427,6 +533,7 @@ app.get("/stream/:hash/:fileId", async (req, res) => {
     if (cleaned) return;
     cleaned = true;
     activeStreams = Math.max(0, activeStreams - 1);
+    decrementSessionStreams(sessionId);
     streamController.abort();
     interceptedStream?.destroy();
     nodeStream?.destroy();
@@ -469,7 +576,7 @@ app.get("/stream/:hash/:fileId", async (req, res) => {
 
     // Attach matroska parser transparently to the stream pipe for ALL streams
     // Use stable=false (default) so it can recover from random seeks
-    const meta = getOrCreateMetadata(hash, fileId);
+    const meta = getOrCreateMetadata(sessionId, hash, fileId);
 
     // intercept stream bytes and push them through parser
     // `meta.parseStream` requires AsyncIterable and returns AsyncIterable.
@@ -500,6 +607,7 @@ app.get("/stream/:hash/:fileId", async (req, res) => {
 
 app.get("/subtitles/:hash/:fileId", async (req, res) => {
   const { hash, fileId } = req.params;
+  const sessionId = getSessionId(req, res);
 
   res.writeHead(200, {
     "Content-Type": "text/event-stream",
@@ -513,7 +621,7 @@ app.get("/subtitles/:hash/:fileId", async (req, res) => {
   console.log(`[subtitles] SSE connection opened for ${hash}/${fileId}`);
 
   try {
-    const meta = getOrCreateMetadata(hash, fileId);
+    const meta = getOrCreateMetadata(sessionId, hash, fileId);
 
     const onSubtitle = (subtitle: unknown, trackNumber: number) => {
       res.write(
@@ -536,8 +644,9 @@ app.get("/subtitles/:hash/:fileId", async (req, res) => {
 
 app.get("/tracks/:hash/:fileId", async (req, res) => {
   const { hash, fileId } = req.params;
+  const sessionId = getSessionId(req, res);
   try {
-    const meta = getOrCreateMetadata(hash, fileId);
+    const meta = getOrCreateMetadata(sessionId, hash, fileId);
     const tracks = await meta.getTracks();
     res.json(tracks);
   } catch (err) {
@@ -549,10 +658,11 @@ app.get("/tracks/:hash/:fileId", async (req, res) => {
 
 app.get("/attachments/:hash/:fileId", async (req, res) => {
   const { hash, fileId } = req.params;
+  const sessionId = getSessionId(req, res);
   const lan = "localhost";
 
   try {
-    const meta = getOrCreateMetadata(hash, fileId);
+    const meta = getOrCreateMetadata(sessionId, hash, fileId);
     const attachments = (await meta.getAttachments()) as AttachmentItem[];
 
     const formatted = attachments.map(

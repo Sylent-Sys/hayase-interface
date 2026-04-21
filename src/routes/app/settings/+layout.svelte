@@ -20,6 +20,10 @@
       href: '/app/settings/client/'
     },
     {
+      title: 'Client Monitor',
+      href: '/app/settings/client/monitor/'
+    },
+    {
       title: 'Interface',
       href: '/app/settings/interface/'
     },
