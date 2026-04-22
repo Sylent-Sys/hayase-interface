@@ -40,7 +40,14 @@ const MAX_METADATA_CACHE_ENTRIES = Number(
 );
 
 let activeStreams = 0;
-const sessionStreamCounts = new Map<string, number>();
+
+// Maps sessionId → set of "hash-fileId" keys that are actively streaming.
+// Seeks on the same file do NOT add a new entry; they replace the existing one.
+const sessionActiveFiles = new Map<string, Set<string>>();
+
+// Maps "sessionId-hash-fileId" → the AbortController that owns the current stream.
+// A seek aborts the previous controller and installs a new one under the same key.
+const sessionFileControllers = new Map<string, AbortController>();
 
 app.use(cors());
 
@@ -84,7 +91,7 @@ type AttachmentItem = {
 
 type ProxyMetricsResponse = {
   activeStreams: number;
-  sessionStreamCountsSize: number;
+  sessionActiveFilesSize: number;
   metadataCacheSize: number;
   limits: {
     maxConcurrentStreams: number;
@@ -236,22 +243,6 @@ function getOrCreateMetadata(sessionId: string, hash: string, fileId: string) {
   return metadatamap.get(key)?.meta;
 }
 
-function incrementSessionStreams(sessionId: string): number {
-  const current = sessionStreamCounts.get(sessionId) || 0;
-  const next = current + 1;
-  sessionStreamCounts.set(sessionId, next);
-  return next;
-}
-
-function decrementSessionStreams(sessionId: string) {
-  const current = sessionStreamCounts.get(sessionId) || 0;
-  if (current <= 1) {
-    sessionStreamCounts.delete(sessionId);
-    return;
-  }
-  sessionStreamCounts.set(sessionId, current - 1);
-}
-
 // ─── Native API Endpoints ──────────────────────────────────────────────────────
 
 app.get("/health", (req, res) => res.send("OK"));
@@ -290,13 +281,13 @@ app.get("/protocol/status", (req, res) => {
 });
 
 app.get("/metrics", (_req, res) => {
-  const sessionStreams = Array.from(sessionStreamCounts.entries())
-    .map(([sessionId, count]) => ({ sessionId, activeStreams: count }))
+  const sessionStreams = Array.from(sessionActiveFiles.entries())
+    .map(([sessionId, files]) => ({ sessionId, activeStreams: files.size }))
     .sort((a, b) => b.activeStreams - a.activeStreams);
 
   const payload: ProxyMetricsResponse = {
     activeStreams,
-    sessionStreamCountsSize: sessionStreamCounts.size,
+    sessionActiveFilesSize: sessionActiveFiles.size,
     metadataCacheSize: metadatamap.size,
     limits: {
       maxConcurrentStreams: MAX_CONCURRENT_STREAMS,
@@ -514,26 +505,55 @@ app.get("/stream/:hash/:fileId", async (req, res) => {
     return res.status(503).json({ error: "stream capacity reached" });
   }
 
-  if (incrementSessionStreams(sessionId) > MAX_CONCURRENT_STREAMS_PER_SESSION) {
-    decrementSessionStreams(sessionId);
-    return res.status(429).json({
-      error: "session stream limit reached",
-      limit: MAX_CONCURRENT_STREAMS_PER_SESSION,
-    });
+  const { hash, fileId } = req.params;
+  const fileKey = `${hash}-${fileId}`;
+  const sessionFileKey = `${sessionId}-${hash}-${fileId}`;
+
+  // Determine whether this is a new file or a seek on an already-tracked file.
+  const activeFiles = sessionActiveFiles.get(sessionId) ?? new Set<string>();
+  const isSameFile = activeFiles.has(fileKey);
+
+  if (!isSameFile) {
+    // New file: enforce the per-session unique-file limit.
+    if (activeFiles.size >= MAX_CONCURRENT_STREAMS_PER_SESSION) {
+      return res.status(429).json({
+        error: "session stream limit reached",
+        limit: MAX_CONCURRENT_STREAMS_PER_SESSION,
+      });
+    }
+    // Register this file for the session.
+    activeFiles.add(fileKey);
+    sessionActiveFiles.set(sessionId, activeFiles);
+  } else {
+    // Same file (seek): abort the previous stream so its resources are freed.
+    sessionFileControllers.get(sessionFileKey)?.abort();
   }
 
   activeStreams++;
-  const { hash, fileId } = req.params;
   let cleaned = false;
   let nodeStream: Readable | null = null;
   let interceptedStream: Readable | null = null;
   const streamController = new AbortController();
 
+  // Register this controller as the current owner for the session+file key.
+  sessionFileControllers.set(sessionFileKey, streamController);
+
   const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
     activeStreams = Math.max(0, activeStreams - 1);
-    decrementSessionStreams(sessionId);
+
+    // Only clean up session tracking if this controller is still the owner.
+    // If a seek has already replaced us, skip — the replacement owns cleanup.
+    if (sessionFileControllers.get(sessionFileKey) === streamController) {
+      sessionFileControllers.delete(sessionFileKey);
+      const files = sessionActiveFiles.get(sessionId);
+      if (files) {
+        files.delete(fileKey);
+        if (files.size === 0) sessionActiveFiles.delete(sessionId);
+      }
+    }
+
     streamController.abort();
     interceptedStream?.destroy();
     nodeStream?.destroy();
