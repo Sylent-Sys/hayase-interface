@@ -591,7 +591,8 @@ func handleRemoveAll(w http.ResponseWriter, r *http.Request) {
 
 	removed := 0
 	for _, hash := range hashes {
-		if !ensureRequestContext(w, r) {
+		if r.Context().Err() != nil {
+			logKV("request_canceled", "handler", "remove-all", "session", sessionID)
 			return
 		}
 		if releaseTorrentForSession(sessionID, hash) {

@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"sync"
+	"sync/atomic"
 	"testing"
 
 	"github.com/anacrolix/torrent"
@@ -44,6 +45,8 @@ func TestRegisterTorrentForSessionConcurrentCapacity(t *testing.T) {
 	const workers = 64
 	start := make(chan struct{})
 	var wg sync.WaitGroup
+	var successCount atomic.Int64
+	var capacityCount atomic.Int64
 
 	for i := 0; i < workers; i++ {
 		i := i
@@ -53,7 +56,15 @@ func TestRegisterTorrentForSessionConcurrentCapacity(t *testing.T) {
 			<-start
 			sessionID := fmt.Sprintf("session-%d", i)
 			hash := fmt.Sprintf("hash-%d", i)
-			_ = registerTorrentForSession(sessionID, hash, nil)
+			err := registerTorrentForSession(sessionID, hash, nil)
+			switch {
+			case err == nil:
+				successCount.Add(1)
+			case err == errMaxTorrentCapacity:
+				capacityCount.Add(1)
+			default:
+				t.Errorf("unexpected registration error: %v", err)
+			}
 		}()
 	}
 
@@ -65,6 +76,12 @@ func TestRegisterTorrentForSessionConcurrentCapacity(t *testing.T) {
 
 	if got := len(torrentByHash); got > maxTorrents {
 		t.Fatalf("expected active torrents <= %d, got %d", maxTorrents, got)
+	}
+	if got := int(successCount.Load()); got != maxTorrents {
+		t.Fatalf("expected successful registrations=%d, got %d", maxTorrents, got)
+	}
+	if got := int(capacityCount.Load()); got != workers-maxTorrents {
+		t.Fatalf("expected capacity rejections=%d, got %d", workers-maxTorrents, got)
 	}
 }
 
