@@ -15,7 +15,7 @@ import type { AnitomyResult } from 'anitomyscript'
 
 import { dev } from '$app/environment'
 import { savedOptions as extensionOptions, savedConfigs } from '$lib/modules/extensions'
-import { anitomyscript, toSettled } from '$lib/utils'
+import { anitomyscript } from '$lib/utils'
 
 const exclusions: string[] = []
 
@@ -45,7 +45,7 @@ fetch('https://raw.githubusercontent.com/ThaUnknown/filler-scrape/master/filler.
   fillerEpisodes = await res.json()
 })
 
-class ExtensionError extends Error {
+export class ExtensionError extends Error {
   extension
   error
   name = 'ExtensionError'
@@ -56,6 +56,8 @@ class ExtensionError extends Error {
     this.extension = extension
   }
 }
+
+export type StreamedTorrentResult = TorrentResult & { extension: Set<string>, parseObject: AnitomyResult }
 
 // TODO: these 2 exports need to be moved to a better place
 export interface SingleEpisode {
@@ -184,7 +186,7 @@ export const extensions = new class Extensions {
     return titles
   }
 
-  async getResultsFromExtensions ({ media, episode, resolution }: { media: Media, episode: number, resolution: keyof typeof videoResolutions }) {
+  async * getResultsFromExtensions ({ media, episode, resolution }: { media: Media, episode: number, resolution: keyof typeof videoResolutions }) {
     debug(`Fetching results for ${media.id}:${media.title?.userPreferred} ${episode} ${resolution}`)
     await storage.ready
     const extensions = storage.codeManager.extensions
@@ -232,60 +234,67 @@ export const extensions = new class Extensions {
 
     debug(`Checking ${extensions.size} extensions for ${media.id}:${media.title?.userPreferred} ${episode} ${resolution} ${checkMovie ? 'movie' : ''} ${checkBatch ? 'batch' : ''}`)
 
-    // this can take a while, so call it before the extensions so it runs in background
-    const libpromise = native.library()
-
-    // call all extensions, at once, with a timeout
-    const { settled, errors } = await toSettled(
-      [...extensions.entries()]
-        .filter(([id]) => extopts[id]?.enabled && configs[id]?.type === 'torrent')
-        .flatMap(([id, worker]) => {
-          try {
-            const extOptions = extopts[id]!.options
-
-            const handle = (fn: typeof worker.single) =>
-              raceWithHandler(
-                fn(options, extOptions),
-                value => value.map(v => ({ ...v, extension: new Set([id]), parseObject: {} as unknown as AnitomyResult })),
-                error => new ExtensionError(error, id)
-              )
-
-            const calls = [worker.single]
-            if (checkMovie) calls.push(worker.movie)
-            if (checkBatch) calls.push(worker.batch)
-
-            return calls.map(handle)
-          } catch (error) {
-            return [Promise.reject(new ExtensionError(error as Error, id))]
-          }
-        })
-    )
-
-    const results = settled.flat()
-
-    // include results from local library if available
-    try {
-      const entry = (await libpromise).find(lib => lib.mediaID === media.id && lib.episode === episode)
-      if (entry) {
-        results.push({ accuracy: 'medium', date: new Date(entry.date), downloads: 0, hash: entry.hash, extension: new Set(['local']), leechers: 0, link: entry.hash, seeders: 0, size: entry.size, title: entry.name ?? entry.hash, type: entry.files > 1 ? 'batch' : undefined, parseObject: {} as unknown as AnitomyResult })
-      }
-    } catch (error) {
-      debug('Failed to check local library for existing torrents', error)
+    const parseResults = async (results: StreamedTorrentResult[]) => {
+      if (!results.length) return results
+      const parseObjects = await anitomyscript(results.map(({ title }) => title))
+      parseObjects.forEach((parseObject, index) => {
+        results[index]!.parseObject = parseObject
+      })
+      return results
     }
 
-    debug(`Found ${results.length} results, online ${navigator.onLine}`)
+    const tasks: Array<Promise<{
+      results: StreamedTorrentResult[]
+      error?: ExtensionError
+    }>> = []
 
-    const deduped = this.dedupe(results)
+    for (const [id, worker] of extensions.entries()) {
+      if (!extopts[id]?.enabled || configs[id]?.type !== 'torrent') continue
 
-    // return early if there are no results, no need to update peer counts or call anitomy
-    if (!deduped.length) return { results: [], errors: errors as ExtensionError[] }
+      const extOptions = extopts[id].options
+      const shouldUpdatePeers = configs[id].updatePeers ?? true
 
-    const parseObjects = await anitomyscript(deduped.map(({ title }) => title))
-    parseObjects.forEach((parseObject, index) => {
-      deduped[index]!.parseObject = parseObject
-    })
+      const createTask = (fn: typeof worker.single) =>
+        tasks.push(raceWithHandler(
+          fn(options, extOptions),
 
-    return { results: navigator.onLine ? await this.updatePeerCounts(deduped) : deduped, errors: errors as ExtensionError[] }
+          async value => {
+            const vals = navigator.onLine && shouldUpdatePeers && value.length
+              ? await raceTimeout(this.updatePeerCounts(value)) ?? value
+              : value
+
+            return { results: await parseResults(vals.map(v => ({ ...v, extension: new Set([id]), parseObject: {} as unknown as AnitomyResult }))) }
+          },
+          error => ({ error: new ExtensionError(error, id), results: [] })
+        ))
+      createTask(worker.single)
+      if (checkMovie) createTask(worker.movie)
+      if (checkBatch) createTask(worker.batch)
+    }
+
+    tasks.push(raceWithHandler(
+      native.library(),
+      async value => {
+        const entries = value.filter(lib => lib.mediaID === media.id && lib.episode === episode)
+        const results = entries.map(entry => ({ accuracy: 'medium' as const, date: new Date(entry.date), downloads: 0, hash: entry.hash, extension: new Set(['local']), leechers: 0, link: entry.hash, seeders: 0, size: entry.size, title: ('name' in entry && typeof entry.name === 'string' && entry.name.length > 0) ? entry.name : entry.hash, type: entry.files > 1 ? 'batch' as const : undefined, parseObject: {} as unknown as AnitomyResult }))
+        return { results: await parseResults(results) }
+      },
+      error => ({ error: new ExtensionError(error, 'local'), results: [] })
+    ))
+
+    let totalResults = 0
+
+    while (tasks.length) {
+      const { index, payload } = await Promise.race(
+        tasks.map((task, index) => task.then(payload => ({ index, payload })))
+      )
+      tasks.splice(index, 1)
+      totalResults += payload.results.length
+      debug(`Streaming chunk with ${payload.results.length} results and ${!!payload.error} error`)
+      yield payload
+    }
+
+    debug(`Finished streaming ${totalResults} results, online ${navigator.onLine}`)
   }
 
   async getNZBResultsFromExtensions (hash: string) {
@@ -320,24 +329,30 @@ export const extensions = new class Extensions {
     return results
   }
 
+  _scrapeCache = new Map<string, { hash: string, complete: string, downloaded: string, incomplete: string }>()
+
   async updatePeerCounts <T extends TorrentResult[]> (entries: T): Promise<T> {
     debug(`Updating peer counts for ${entries.length} entries`)
 
     try {
-      const updated = await native.updatePeerCounts(entries.map(({ hash }) => hash))
+      const toUpdate = entries.filter(({ hash }) => !this._scrapeCache.has(hash)).map(({ hash }) => hash)
+      const updated = await native.updatePeerCounts(toUpdate)
+      for (const entry of updated) this._scrapeCache.set(entry.hash, entry)
+
       debug('Scrape complete')
-      for (const { hash, complete, downloaded, incomplete } of updated) {
-        const found = entries.find(mapped => mapped.hash === hash)
-        if (!found) continue
-        found.downloads = Number(downloaded)
-        found.leechers = Number(incomplete)
-        found.seeders = Number(complete)
-      }
 
       debug(`Found ${updated.length} entries: ${JSON.stringify(updated)}`)
     } catch (err) {
       const error = err as Error
       debug('Failed to scrape\n' + error.stack)
+    }
+
+    for (const entry of entries) {
+      const cache = this._scrapeCache.get(entry.hash)
+      if (!cache) continue
+      entry.downloads = Number(cache.downloaded) || entry.downloads
+      entry.leechers = Number(cache.incomplete) || entry.leechers
+      entry.seeders = Number(cache.complete) || entry.seeders
     }
     return entries
   }
@@ -385,12 +400,18 @@ export const extensions = new class Extensions {
   }
 }()
 
-function raceWithHandler<T, U = T> (promise: Promise<T>, settled: (res: T) => U, error: (err: Error) => Error = e => e): Promise<U> {
+async function raceWithHandler<T, U = T, E = Error> (promise: Promise<T>, settled: (res: T) => U, error: (err: Error) => E = e => e as E): Promise<Awaited<U> | E> {
   const timeout = new Promise<never>((resolve, reject) => {
-    setTimeout(() => reject(new Error('Timed out after 10 seconds.')), 10_000)
+    setTimeout(() => reject(new Error('Timed out after 10 seconds.')), 20_000)
   })
 
-  return Promise.race([promise, timeout]).then(settled).catch((err: Error) => {
-    throw error(err)
+  return await Promise.race([promise, timeout]).then(settled).catch(error)
+}
+
+function raceTimeout<T> (promise: Promise<T>, time = 3_000): Promise<T | undefined> {
+  const timeout = new Promise<undefined>((resolve, reject) => {
+    setTimeout(() => resolve(undefined), time)
   })
+
+  return Promise.race([promise, timeout])
 }

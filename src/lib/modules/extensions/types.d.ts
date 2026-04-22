@@ -25,6 +25,7 @@ export interface ExtensionConfig {
   update?: string // URL to the config file, can be prefixed with 'gh:' to fetch from GitHub, e.g. 'gh:username/repo' or 'npm:' to fetch from npm, e.g. 'npm:package-name', or a straight url
   code: string // URL to the extension code, can be prefixed with 'gh:' to fetch from GitHub, e.g. 'gh:username/repo' or 'npm:' to fetch from npm, e.g. 'npm:package-name', a straight url, or file: for inline code
   options?: SearchOptions
+  updatePeers?: false // whether to update the peer counts for torrents returned by this extension, this is only applicable for torrent sources and will be ignored for nzb and url sources
 }
 
 export interface TorrentResult {

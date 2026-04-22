@@ -134,10 +134,10 @@
 
   const thumbnailer = new Thumbnailer(mediaInfo.file.url)
 
-  function handleMediaBunnyFallback () {
+  function handleMediaBunnyFallback ({ detail }: CustomEvent<Error>) {
     useMediaBunnyPlayback = false
     toast.error('Mobile playback setup failed', {
-      description: 'Falling back to native playback for this file.'
+      description: detail.message || 'Falling back to native playback for this file.'
     })
   }
 

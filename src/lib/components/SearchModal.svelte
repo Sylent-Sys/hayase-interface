@@ -1,4 +1,5 @@
 <script lang='ts' context='module'>
+  /* eslint-disable no-self-assign */
   import BadgeCheck from 'lucide-svelte/icons/badge-check'
   import Download from 'svelte-radix/Download.svelte'
   import File from 'svelte-radix/File.svelte'
@@ -11,7 +12,7 @@
 
   import * as Dialog from '$lib/components/ui/dialog'
   import { title } from '$lib/modules/anilist'
-  import { extensions } from '$lib/modules/extensions/extensions'
+  import { type ExtensionError, extensions, type StreamedTorrentResult } from '$lib/modules/extensions/extensions'
   import { click, dragScroll } from '$lib/modules/navigate'
   import { settings, videoResolutions } from '$lib/modules/settings'
   import { breakpoints, cn, colors, fastPrettyBytes, since, transferToFileList } from '$lib/utils'
@@ -60,6 +61,8 @@
 <script lang='ts'>
   import Folder from 'lucide-svelte/icons/folder'
   import { getContext } from 'svelte'
+  import { flip } from 'svelte/animate'
+  import { quartInOut } from 'svelte/easing'
 
   import ProgressButton from './ui/button/progress-button.svelte'
   import { Banner } from './ui/img'
@@ -71,9 +74,30 @@
   import { savedConfigs } from '$lib/modules/extensions'
   import { server } from '$lib/modules/torrent'
 
+  const downloaded = server.downloaded
+
   $: open = !!$searchStore?.media
 
-  $: searchResult = !!$searchStore?.media && extensions.getResultsFromExtensions({ media: $searchStore.media, episode: $searchStore.episode, resolution: $settings.searchQuality })
+  $: searchResGenerator = !!$searchStore?.media && extensions.getResultsFromExtensions({ media: $searchStore.media, episode: $searchStore.episode, resolution: $settings.searchQuality })
+
+  $: searchResult = searchResGenerator && processResults(searchResGenerator)
+
+  let concatResults: StreamedTorrentResult[] = []
+  let errors: ExtensionError[] = []
+
+  async function processResults (iterable: ReturnType<typeof extensions.getResultsFromExtensions>) {
+    concatResults = errors = []
+    for await (const { results, error } of iterable) {
+      if (iterable !== searchResGenerator) return { results: [], errors: [] }
+      concatResults = extensions.dedupe([...concatResults, ...results])
+      if (error) {
+        errors.push(error)
+        errors = errors
+      }
+    }
+
+    return { results: concatResults, errors }
+  }
 
   function close (state = false) {
     if (!state) {
@@ -93,7 +117,9 @@
 
   async function playBest () {
     if (!searchResult) return
-    const best = filterAndSortResults((await searchResult).results, inputText, await $downloaded)[0]
+    const { results } = await searchResult
+    if (!results.length) return
+    const best = filterAndSortResults(results, inputText, $downloaded)[0]
 
     if (best) play(best)
   }
@@ -154,8 +180,6 @@
   $: findTorrentIdentifiers(inputText)
 
   $: searchResult && startAnimation(searchResult)
-
-  const downloaded = server.downloaded
 
   const stop = getContext<() => void>('stop-progress-bar')
 
@@ -226,7 +250,85 @@
           </ProgressButton>
         </div>
         <div class='h-full overflow-y-auto px-4 sm:px-6 pt-2' role='menu' tabindex='-1' on:keydown={stopAnimation} on:focusin={stopAnimation} on:pointerenter={stopAnimation} on:pointermove={stopAnimation} use:dragScroll style:--custom={$searchStore.media.coverImage?.color ?? '#fff'} style:--red={r} style:--green={g} style:--blue={b}>
-          {#await Promise.all([searchResult, $downloaded])}
+          {#if $searchStore.media}
+            {#each filterAndSortResults(concatResults, inputText, $downloaded) as result (result.hash)}
+              <div class='p-3 flex cursor-pointer mb-2 relative rounded-md overflow-hidden bg-neutral-950 group/card select:ring-1 select:ring-custom select:bg-neutral-900 select:scale-[1.02] select:shadow-lg scale-100 transition-all [content-visibility:auto] [contain-intrinsic-height:auto_106px]'
+                class:opacity-40={result.accuracy === 'low'}
+                use:click={() => play(result)}
+                title={result.parseObject.file_name[0]}
+                animate:flip={{ duration: 400, easing: quartInOut }}>
+                {#if result.accuracy === 'high' || result.accuracy === 'medium'}
+                  <BadgeCheck class={cn('absolute top-4 left-4 md:top-3 md:left-3 mix-blend-difference', result.accuracy === 'high' ? 'text-[#53da33]' : 'text-muted-foreground/20')} fill='currentColor' color='#000' size='1.2rem' />
+                {/if}
+                {#if $breakpoints.md}
+                  <div class='size-20 relative shrink-0 flex items-center justify-center text-xs px-1 text-wrap break-all font-bold text-center overflow-clip'>
+                    {#if $downloaded.has(result.hash)}
+                      <Download class='text-[#53da33] size-12 opacity-80' stroke-width='0.5' color='currentColor' stroke='currentColor' />
+                    {:else if result.type}
+                      <Folder class='text-yellow-300 size-12 opacity-80' fill='currentColor' />
+                    {:else}
+                      <File class='text-muted-foreground size-12 opacity-80' />
+                    {/if}
+                  </div>
+                {/if}
+                <div class='flex pl-2 flex-col justify-between w-full h-20 relative min-w-0 text-[.7rem]'>
+                  <div class='flex w-full items-center'>
+                    <div class='text-xl font-bold text-nowrap group-select/card:text-custom transition-colors pl-6 md:pl-0'>{getGroup(result.parseObject)}</div>
+                    <div class='ml-auto flex gap-2 self-start'>
+                      {#each result.extension as id (id)}
+                        {#if $savedConfigs[id]}
+                          <img src={$savedConfigs[id].icon} alt={id} class='size-4' title='Provided by {id}' decoding='async' loading='lazy' />
+                        {/if}
+                      {/each}
+                    </div>
+                  </div>
+                  <div class='text-muted-foreground text-ellipsis text-nowrap overflow-hidden'>{simplifyFilename(result.parseObject)}</div>
+                  <div class='flex flex-row leading-none'>
+                    <div class='details text-light flex'>
+                      {#if result.type === 'best'}
+                        <span class='rounded px-3 py-1 mr-0.5 border text-nowrap flex items-center' style='background: #1d2d1e; border-color: #53da33 !important; color: #53da33'>
+                          Best Release
+                        </span>
+                      {:else if result.type === 'alt'}
+                        <span class='rounded px-3 py-1 mr-0.5 border text-nowrap flex items-center' style='background: #391d20; border-color: #c52d2d !important; color: #c52d2d'>
+                          Alt Release
+                        </span>
+                      {:else if result.type === 'batch'}
+                        <span class='rounded px-3 py-1 mr-0.5 border text-nowrap flex items-center' style='background: #1d2031; border-color: #2d5ec5 !important; color: #2d5ec5'>
+                          Batch
+                        </span>
+                      {/if}
+                      <span class={cn('text-nowrap flex items-center', result.seeders > 20 ? 'text-green-600' : result.seeders < 5 ? 'text-red-600' : 'text-yellow-600')}>{result.seeders} Seeders</span>
+                      <span class='text-nowrap flex items-center text-white/80'>{fastPrettyBytes(result.size)}</span>
+                      <span class='text-nowrap flex items-center text-white/80'>{since(new Date(result.date))}</span>
+                    </div>
+                    <div class='flex ml-auto flex-row-reverse'>
+                      {#each sanitiseTerms(result.parseObject) as { text, color }, i (i)}
+                        <div class='rounded px-3 py-1 ml-2 text-nowrap font-bold flex items-center' style:background={color}>
+                          <div class='text-contrast-filter'>
+                            {text}
+                          </div>
+                        </div>
+                      {/each}
+                    </div>
+                  </div>
+                </div>
+              </div>
+            {/each}
+            {#each errors as error, i (i)}
+              <div class='p-5 flex items-center justify-center w-full h-80'>
+                <div>
+                  <div class='mb-1 font-bold text-2xl text-center '>
+                    Extensions {error.extension} encountered an error
+                  </div>
+                  <div class='text-md text-center text-muted-foreground whitespace-pre-wrap'>
+                    {error.error.message}
+                  </div>
+                </div>
+              </div>
+            {/each}
+          {/if}
+          {#await searchResult}
             {#each Array.from({ length: 12 }) as _, i (i)}
               <div class='p-3 h-[106px] flex cursor-pointer mb-2 relative rounded-md overflow-hidden bg-neutral-950 flex-col justify-between [content-visibility:auto] [contain-intrinsic-height:auto_106px]'>
                 <div class='h-4 w-40 bg-primary/5 animate-pulse rounded mt-2' />
@@ -240,93 +342,18 @@
                 </div>
               </div>
             {/each}
-          {:then [search, downloaded]}
-            {@const media = $searchStore.media}
-            {#if search && media}
-              {@const { results, errors } = search}
-              {#each filterAndSortResults(results, inputText, downloaded) as result (result.hash)}
-                <div class='p-3 flex cursor-pointer mb-2 relative rounded-md overflow-hidden bg-neutral-950 group/card select:ring-1 select:ring-custom select:bg-neutral-900 select:scale-[1.02] select:shadow-lg scale-100 transition-all [content-visibility:auto] [contain-intrinsic-height:auto_106px]' class:opacity-40={result.accuracy === 'low'} use:click={() => play(result)} title={result.parseObject.file_name[0]}>
-                  {#if result.accuracy === 'high' || result.accuracy === 'medium'}
-                    <BadgeCheck class={cn('absolute top-4 left-4 md:top-3 md:left-3 mix-blend-difference', result.accuracy === 'high' ? 'text-[#53da33]' : 'text-muted-foreground/20')} fill='currentColor' color='#000' size='1.2rem' />
-                  {/if}
-                  {#if $breakpoints.md}
-                    <div class='size-20 relative shrink-0 flex items-center justify-center text-xs px-1 text-wrap break-all font-bold text-center overflow-clip'>
-                      {#if downloaded.has(result.hash)}
-                        <Download class='text-[#53da33] size-12 opacity-80' stroke-width='0.5' color='currentColor' stroke='currentColor' />
-                      {:else if result.type}
-                        <Folder class='text-yellow-300 size-12 opacity-80' fill='currentColor' />
-                      {:else}
-                        <File class='text-muted-foreground size-12 opacity-80' />
-                      {/if}
-                    </div>
-                  {/if}
-                  <div class='flex pl-2 flex-col justify-between w-full h-20 relative min-w-0 text-[.7rem]'>
-                    <div class='flex w-full items-center'>
-                      <div class='text-xl font-bold text-nowrap group-select/card:text-custom transition-colors pl-6 md:pl-0'>{getGroup(result.parseObject)}</div>
-                      <div class='ml-auto flex gap-2 self-start'>
-                        {#each result.extension as id (id)}
-                          {#if $savedConfigs[id]}
-                            <img src={$savedConfigs[id].icon} alt={id} class='size-4' title='Provided by {id}' decoding='async' loading='lazy' />
-                          {/if}
-                        {/each}
-                      </div>
-                    </div>
-                    <div class='text-muted-foreground text-ellipsis text-nowrap overflow-hidden'>{simplifyFilename(result.parseObject)}</div>
-                    <div class='flex flex-row leading-none'>
-                      <div class='details text-light flex'>
-                        {#if result.type === 'best'}
-                          <span class='rounded px-3 py-1 mr-0.5 border text-nowrap flex items-center' style='background: #1d2d1e; border-color: #53da33 !important; color: #53da33'>
-                            Best Release
-                          </span>
-                        {:else if result.type === 'alt'}
-                          <span class='rounded px-3 py-1 mr-0.5 border text-nowrap flex items-center' style='background: #391d20; border-color: #c52d2d !important; color: #c52d2d'>
-                            Alt Release
-                          </span>
-                        {:else if result.type === 'batch'}
-                          <span class='rounded px-3 py-1 mr-0.5 border text-nowrap flex items-center' style='background: #1d2031; border-color: #2d5ec5 !important; color: #2d5ec5'>
-                            Batch
-                          </span>
-                        {/if}
-                        <span class={cn('text-nowrap flex items-center', result.seeders > 20 ? 'text-green-600' : result.seeders < 5 ? 'text-red-600' : 'text-yellow-600')}>{result.seeders} Seeders</span>
-                        <span class='text-nowrap flex items-center text-white/80'>{fastPrettyBytes(result.size)}</span>
-                        <span class='text-nowrap flex items-center text-white/80'>{since(new Date(result.date))}</span>
-                      </div>
-                      <div class='flex ml-auto flex-row-reverse'>
-                        {#each sanitiseTerms(result.parseObject) as { text, color }, i (i)}
-                          <div class='rounded px-3 py-1 ml-2 text-nowrap font-bold flex items-center' style:background={color}>
-                            <div class='text-contrast-filter'>
-                              {text}
-                            </div>
-                          </div>
-                        {/each}
-                      </div>
-                    </div>
+          {:then results}
+            {#if results && !results.results.length}
+              <div class='p-5 flex items-center justify-center w-full h-80'>
+                <div>
+                  <div class='mb-3 font-bold text-4xl text-center '>
+                    Ooops!
+                  </div>
+                  <div class='text-lg text-center text-muted-foreground'>
+                    No results found.<br />Try specifying a torrent manually by pasting a magnet link or torrent file into the filter bar.
                   </div>
                 </div>
-              {:else}
-                <div class='p-5 flex items-center justify-center w-full h-80'>
-                  <div>
-                    <div class='mb-3 font-bold text-4xl text-center '>
-                      Ooops!
-                    </div>
-                    <div class='text-lg text-center text-muted-foreground'>
-                      No results found.<br />Try specifying a torrent manually by pasting a magnet link or torrent file into the filter bar.
-                    </div>
-                  </div>
-                </div>
-              {/each}
-              {#each errors as error, i (i)}
-                <div class='p-5 flex items-center justify-center w-full h-80'>
-                  <div>
-                    <div class='mb-1 font-bold text-2xl text-center '>
-                      Extensions {error.extension} encountered an error
-                    </div>
-                    <div class='text-md text-center text-muted-foreground whitespace-pre-wrap'>
-                      {error.error.stack}
-                    </div>
-                  </div>
-                </div>
-              {/each}
+              </div>
             {/if}
           {:catch error}
             <div class='p-5 flex items-center justify-center w-full h-80'>

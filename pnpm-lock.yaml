@@ -57,11 +57,11 @@ importers:
         specifier: ^0.1.36
         version: 0.1.36(svelte@5.46.4)
       abslink:
-        specifier: ^1.1.6
-        version: 1.1.6
+        specifier: ^1.2.2
+        version: 1.2.2
       anitomyscript:
         specifier: github:thaunknown/anitomyscript
-        version: git+https://github.com/thaunknown/anitomyscript.git#fc00888d69ba59258167f2fac9e86576b29863b7
+        version: https://codeload.github.com/thaunknown/anitomyscript/tar.gz/fc00888d69ba59258167f2fac9e86576b29863b7
       bittorrent-tracker:
         specifier: 10.0.12
         version: 10.0.12
@@ -93,8 +93,8 @@ importers:
         specifier: ^6.2.2
         version: 6.2.2
       jassub:
-        specifier: ^2.5.0
-        version: 2.5.0
+        specifier: ^2.5.1
+        version: 2.5.1
       js-levenshtein:
         specifier: ^1.1.6
         version: 1.1.6
@@ -112,7 +112,7 @@ importers:
         version: 1.2.3
       p2pt:
         specifier: github:ThaUnknown/p2pt#modernise
-        version: git+https://github.com/ThaUnknown/p2pt.git#9ad7a56ed6ee43f5664ebad33b803702ee349316
+        version: https://codeload.github.com/ThaUnknown/p2pt/tar.gz/9ad7a56ed6ee43f5664ebad33b803702ee349316
       parse-torrent:
         specifier: ^11.0.19
         version: 11.0.19
@@ -212,7 +212,7 @@ importers:
         version: 2.1.3
       native:
         specifier: github:hayase-app/native
-        version: git+https://github.com/hayase-app/native.git#8e9d865f111e356a087e14865d9451771546aad2
+        version: https://codeload.github.com/hayase-app/native/tar.gz/8e9d865f111e356a087e14865d9451771546aad2
       rollup-plugin-license:
         specifier: ^3.6.0
         version: 3.6.0(picomatch@4.0.3)(rollup@4.55.1)
@@ -986,8 +986,8 @@ packages:
     resolution: {integrity: sha512-h8lQ8tacZYnR3vNQTgibj+tODHI5/+l06Au2Pcriv/Gmet0eaj4TwWH41sO9wnHDiQsEj19q0drzdWdeAHtweg==}
     engines: {node: '>=6.5'}
 
-  abslink@1.1.6:
-    resolution: {integrity: sha512-8fQgnUoVSgc1IhOrYzdDY+wTDPktbuYjds2LKf9kWYWKwDnHgXU168gdV3sPei7vevFf5m2fPZ6IQSKZkSjHVg==}
+  abslink@1.2.2:
+    resolution: {integrity: sha512-HCOItvzORPjMzddCmEpbH8+W1VM3yjH+CR7DLtxlxFKX/jz5twJbm7KLfblO7eKLnXINLah8Hk2ZAJqxXeSkOg==}
 
   acorn-jsx@5.3.2:
     resolution: {integrity: sha512-rq9s+JNhf0IChjtDXxllJ7g41oZk5SlXtp0LHwyA5cejwn7vKmKp4pPri6YEePv2PU65sAsegbXtIinmDFDXgQ==}
@@ -1006,8 +1006,8 @@ packages:
   ajv@6.12.6:
     resolution: {integrity: sha512-j3fVLgvTo527anyYyJOGTYJbG+vnnQYvE0m5mmkc1TK+nxAppkCLMIL0aZ4dblVCNoGShhm+kzE4ZUykBoMg4g==}
 
-  anitomyscript@git+https://github.com/thaunknown/anitomyscript.git#fc00888d69ba59258167f2fac9e86576b29863b7:
-    resolution: {commit: fc00888d69ba59258167f2fac9e86576b29863b7, repo: https://github.com/thaunknown/anitomyscript.git, type: git}
+  anitomyscript@https://codeload.github.com/thaunknown/anitomyscript/tar.gz/fc00888d69ba59258167f2fac9e86576b29863b7:
+    resolution: {tarball: https://codeload.github.com/thaunknown/anitomyscript/tar.gz/fc00888d69ba59258167f2fac9e86576b29863b7}
     version: 2.0.10
 
   ansi-regex@5.0.1:
@@ -1968,8 +1968,8 @@ packages:
   jackspeak@3.4.3:
     resolution: {integrity: sha512-OGlZQpz2yfahA/Rd1Y8Cd9SIEsqvXkLVoSw/cgwhnhFMDbsQFeZYoJJ7bIZBS9BcamUW96asq/npPWugM+RQBw==}
 
-  jassub@2.5.0:
-    resolution: {integrity: sha512-X0CEiI1sQiuO1xGl6B3+MiD+7AEbY9Xd5eCIXF2iy+dhg6Pv4GKb3j/MGTBuiSVNlTnvQX0RIVzjtWq0UpGBng==}
+  jassub@2.5.1:
+    resolution: {integrity: sha512-cQrQa42zfhNCBcNsYfep8E9acLW66PP87M3ZiNyWPEUyj4JBGhi7buf6aOhUbkNRkHe9iA+TNTZms0JJcS7zIA==}
 
   jiti@1.21.6:
     resolution: {integrity: sha512-2yTgeWTWzMWkHu6Jp9NKgePDaYHbntiwvYuuJLbbN9vl7DC9DvXKOB2BC3ZZ92D3cvV/aflH0osDfwpHepQ53w==}
@@ -2143,8 +2143,8 @@ packages:
     engines: {node: ^18 || >=20}
     hasBin: true
 
-  native@git+https://github.com/hayase-app/native.git#8e9d865f111e356a087e14865d9451771546aad2:
-    resolution: {commit: 8e9d865f111e356a087e14865d9451771546aad2, repo: https://github.com/hayase-app/native.git, type: git}
+  native@https://codeload.github.com/hayase-app/native/tar.gz/8e9d865f111e356a087e14865d9451771546aad2:
+    resolution: {tarball: https://codeload.github.com/hayase-app/native/tar.gz/8e9d865f111e356a087e14865d9451771546aad2}
     version: 1.0.0
 
   natural-compare@1.4.0:
@@ -2243,8 +2243,8 @@ packages:
     resolution: {integrity: sha512-tkAQEw8ysMzmkhgw8k+1U/iPhWNhykKnSk4Rd5zLoPJCuJaGRPo6YposrZgaxHKzDHdDWWZvE/Sk7hsL2X/CpQ==}
     engines: {node: '>=18'}
 
-  p2pt@git+https://github.com/ThaUnknown/p2pt.git#9ad7a56ed6ee43f5664ebad33b803702ee349316:
-    resolution: {commit: 9ad7a56ed6ee43f5664ebad33b803702ee349316, repo: https://github.com/ThaUnknown/p2pt.git, type: git}
+  p2pt@https://codeload.github.com/ThaUnknown/p2pt/tar.gz/9ad7a56ed6ee43f5664ebad33b803702ee349316:
+    resolution: {tarball: https://codeload.github.com/ThaUnknown/p2pt/tar.gz/9ad7a56ed6ee43f5664ebad33b803702ee349316}
     version: 1.5.1
 
   package-json-from-dist@1.0.1:
@@ -3727,7 +3727,7 @@ snapshots:
     dependencies:
       event-target-shim: 5.0.1
 
-  abslink@1.1.6: {}
+  abslink@1.2.2: {}
 
   acorn-jsx@5.3.2(acorn@8.15.0):
     dependencies:
@@ -3744,7 +3744,7 @@ snapshots:
       json-schema-traverse: 0.4.1
       uri-js: 4.4.1
 
-  anitomyscript@git+https://github.com/thaunknown/anitomyscript.git#fc00888d69ba59258167f2fac9e86576b29863b7: {}
+  anitomyscript@https://codeload.github.com/thaunknown/anitomyscript/tar.gz/fc00888d69ba59258167f2fac9e86576b29863b7: {}
 
   ansi-regex@5.0.1: {}
 
@@ -4877,9 +4877,9 @@ snapshots:
     optionalDependencies:
       '@pkgjs/parseargs': 0.11.0
 
-  jassub@2.5.0:
+  jassub@2.5.1:
     dependencies:
-      abslink: 1.1.6
+      abslink: 1.2.2
       lfa-ponyfill: 1.1.0
       rvfc-polyfill: 1.0.8
       throughput: 1.0.2
@@ -5019,7 +5019,7 @@ snapshots:
 
   nanoid@5.1.5: {}
 
-  native@git+https://github.com/hayase-app/native.git#8e9d865f111e356a087e14865d9451771546aad2:
+  native@https://codeload.github.com/hayase-app/native/tar.gz/8e9d865f111e356a087e14865d9451771546aad2:
     dependencies:
       '@types/chromecast-caf-receiver': 6.0.26
 
@@ -5121,7 +5121,7 @@ snapshots:
 
   p-map@7.0.4: {}
 
-  p2pt@git+https://github.com/ThaUnknown/p2pt.git#9ad7a56ed6ee43f5664ebad33b803702ee349316:
+  p2pt@https://codeload.github.com/ThaUnknown/p2pt/tar.gz/9ad7a56ed6ee43f5664ebad33b803702ee349316:
     dependencies:
       bittorrent-tracker: 10.0.12
       uint8-util: 2.2.6

@@ -97,7 +97,7 @@
     loadeddata: undefined
     loadedmetadata: undefined
     timeupdate: undefined
-    fallback: { error: unknown }
+    fallback: Error
   }>()
 
   let lastSyncPaused = paused
@@ -131,7 +131,6 @@
   let rafHandle = 0
 
   let canvas: HTMLCanvasElement
-  let subcanvas: HTMLCanvasElement
   let context: CanvasRenderingContext2D | null | undefined
 
   $: canvasSource = canvas
@@ -226,6 +225,7 @@
   }
 
   async function rebuildBackendPipeline (startTime: number, initial = false) {
+    readyState = 0
     await clearIterators()
 
     const playbackVideoTracks = await filterAsync(await input.getVideoTracks(), track => track.canDecode())
@@ -252,7 +252,6 @@
     videoSink = new CanvasSink(selectedVideo, { poolSize: 2, fit: 'contain' })
     audioSink = selectedAudio && new AudioBufferSink(selectedAudio)
 
-    readyState = 0
     playbackTimeAtStart = clamp(currentTime)
 
     videoWidth = canvas.width = selectedVideo.displayWidth
@@ -360,6 +359,7 @@
     const wasPaused = paused
     pause()
 
+    readyState = 1
     playbackTimeAtStart = await startBackendVideoIterator(time)
     setCurrentTime()
     await subtitles?.resyncCurrentTrack()
@@ -400,10 +400,10 @@
     await clearIterators()
   }
 
-  function handleBackendError (error: unknown) {
+  function handleBackendError (error: Error) {
     console.error('MediaBunny playback failed, falling back to native video:', error)
     destroy()
-    dispatch('fallback', { error })
+    dispatch('fallback', error)
   }
 
   export async function load (skipDestroy = false) {
@@ -421,7 +421,7 @@
 
       await rebuildBackendPipeline(playbackTimeAtStart, true)
     } catch (error) {
-      handleBackendError(error)
+      handleBackendError(error as Error)
     }
   }
 
@@ -446,6 +446,20 @@
   $: if (Math.abs(target - lastObservedCurrentTime) > 0.001) {
     lastObservedCurrentTime = target
     seekBackendTo(target).catch(handleBackendError)
+  }
+
+  let sentinel: WakeLockSentinel | undefined
+
+  async function lock () {
+    sentinel = await navigator.wakeLock?.request?.('screen')
+  }
+  function unlock () {
+    sentinel?.release()
+  }
+  $: if (paused) {
+    unlock()
+  } else {
+    lock()
   }
 
   $: if (paused !== lastSyncPaused) {
@@ -515,4 +529,4 @@
   use:setupBackend={src}
   {...$$restProps}
 />
-<canvas class='size-full object-contain pointer-events-none absolute inset-0' use:createSubs bind:this={subcanvas} />
+<canvas class='size-full object-contain pointer-events-none absolute inset-0' use:createSubs />
