@@ -30,7 +30,7 @@ const STREAM_CONNECT_TIMEOUT_MS = Number(
 );
 const MAX_CONCURRENT_STREAMS = Number(process.env.MAX_CONCURRENT_STREAMS || 40);
 const MAX_CONCURRENT_STREAMS_PER_SESSION = Number(
-  process.env.MAX_CONCURRENT_STREAMS_PER_SESSION || 6,
+  process.env.MAX_CONCURRENT_STREAMS_PER_SESSION || 10,
 );
 const METADATA_CACHE_TTL_MS = Number(
   process.env.METADATA_CACHE_TTL_MS || 10 * 60 * 1000,
@@ -41,13 +41,9 @@ const MAX_METADATA_CACHE_ENTRIES = Number(
 
 let activeStreams = 0;
 
-// Maps sessionId → set of "hash-fileId" keys that are actively streaming.
-// Seeks on the same file do NOT add a new entry; they replace the existing one.
-const sessionActiveFiles = new Map<string, Set<string>>();
-
-// Maps "sessionId-hash-fileId" → the AbortController that owns the current stream.
-// A seek aborts the previous controller and installs a new one under the same key.
-const sessionFileControllers = new Map<string, AbortController>();
+// Maps sessionId → Map<fileKey, count> for active streams.
+// This allows multiplexing multiple range requests for the same file.
+const sessionActiveFiles = new Map<string, Map<string, number>>();
 
 app.use(cors());
 
@@ -282,7 +278,7 @@ app.get("/protocol/status", (req, res) => {
 
 app.get("/metrics", (_req, res) => {
   const sessionStreams = Array.from(sessionActiveFiles.entries())
-    .map(([sessionId, files]) => ({ sessionId, activeStreams: files.size }))
+    .map(([sessionId, filesMap]) => ({ sessionId, activeStreams: filesMap.size }))
     .sort((a, b) => b.activeStreams - a.activeStreams);
 
   const payload: ProxyMetricsResponse = {
@@ -507,27 +503,25 @@ app.get("/stream/:hash/:fileId", async (req, res) => {
 
   const { hash, fileId } = req.params;
   const fileKey = `${hash}-${fileId}`;
-  const sessionFileKey = `${sessionId}-${hash}-${fileId}`;
 
-  // Determine whether this is a new file or a seek on an already-tracked file.
-  const activeFiles = sessionActiveFiles.get(sessionId) ?? new Set<string>();
-  const isSameFile = activeFiles.has(fileKey);
-
-  if (!isSameFile) {
-    // New file: enforce the per-session unique-file limit.
-    if (activeFiles.size >= MAX_CONCURRENT_STREAMS_PER_SESSION) {
-      return res.status(429).json({
-        error: "session stream limit reached",
-        limit: MAX_CONCURRENT_STREAMS_PER_SESSION,
-      });
-    }
-    // Register this file for the session.
-    activeFiles.add(fileKey);
+  // Track active files per session with reference counting.
+  // Modern browsers open multiple concurrent range requests for the same media file.
+  let activeFiles = sessionActiveFiles.get(sessionId);
+  if (!activeFiles) {
+    activeFiles = new Map<string, number>();
     sessionActiveFiles.set(sessionId, activeFiles);
-  } else {
-    // Same file (seek): abort the previous stream so its resources are freed.
-    sessionFileControllers.get(sessionFileKey)?.abort();
   }
+
+  const isSameFile = activeFiles.has(fileKey);
+  if (!isSameFile && activeFiles.size >= MAX_CONCURRENT_STREAMS_PER_SESSION) {
+    return res.status(429).json({
+      error: "session stream limit reached",
+      limit: MAX_CONCURRENT_STREAMS_PER_SESSION,
+    });
+  }
+
+  // Increment reference count for this file in the session.
+  activeFiles.set(fileKey, (activeFiles.get(fileKey) ?? 0) + 1);
 
   activeStreams++;
   let cleaned = false;
@@ -535,29 +529,31 @@ app.get("/stream/:hash/:fileId", async (req, res) => {
   let interceptedStream: Readable | null = null;
   const streamController = new AbortController();
 
-  // Register this controller as the current owner for the session+file key.
-  sessionFileControllers.set(sessionFileKey, streamController);
-
   const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
     activeStreams = Math.max(0, activeStreams - 1);
 
-    // Only clean up session tracking if this controller is still the owner.
-    // If a seek has already replaced us, skip — the replacement owns cleanup.
-    if (sessionFileControllers.get(sessionFileKey) === streamController) {
-      sessionFileControllers.delete(sessionFileKey);
-      const files = sessionActiveFiles.get(sessionId);
-      if (files) {
+    const files = sessionActiveFiles.get(sessionId);
+    if (files) {
+      const count = files.get(fileKey) ?? 0;
+      if (count <= 1) {
         files.delete(fileKey);
-        if (files.size === 0) sessionActiveFiles.delete(sessionId);
+      } else {
+        files.set(fileKey, count - 1);
       }
+      if (files.size === 0) sessionActiveFiles.delete(sessionId);
     }
 
     streamController.abort();
     interceptedStream?.destroy();
     nodeStream?.destroy();
   };
+
+  // Register cleanup immediately after incrementing counts to prevent leaks if requests abort early
+  req.on("close", cleanup);
+  res.on("close", cleanup);
+  res.on("finish", cleanup);
 
   try {
     const connectTimeout = setTimeout(
@@ -595,19 +591,18 @@ app.get("/stream/:hash/:fileId", async (req, res) => {
     );
 
     // Attach matroska parser transparently to the stream pipe for ALL streams
-    // Use stable=false (default) so it can recover from random seeks
+    // Create a fresh parser instance for each request to avoid state corruption
+    // during parallel range requests, while delegating events to the shared meta.
     const meta = getOrCreateMetadata(sessionId, hash, fileId);
+    const parser = new Metadata(new MockWebTorrentFile(sessionId, hash, fileId) as any);
+    parser.on("subtitle", (s, t) => meta.emit("subtitle", s, t));
 
     // intercept stream bytes and push them through parser
-    // `meta.parseStream` requires AsyncIterable and returns AsyncIterable.
-    interceptedStream = Readable.from(meta.parseStream(nodeStream));
+    interceptedStream = Readable.from(parser.parseStream(nodeStream));
 
     // Pipe intercepted readable stream straight to the client
     interceptedStream.pipe(res);
 
-    req.on("close", cleanup);
-    res.on("close", cleanup);
-    res.on("finish", cleanup);
     interceptedStream.on("end", cleanup);
 
     interceptedStream.on("error", (err) => {
