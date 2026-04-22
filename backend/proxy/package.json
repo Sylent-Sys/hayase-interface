@@ -1,0 +1,34 @@
+{
+  "name": "hayase-backend-proxy",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "CORS Proxy for Hayase Interface",
+  "main": "server.ts",
+  "scripts": {
+    "start": "tsx server.ts"
+  },
+  "dependencies": {
+    "abslink": "^1.1.6",
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "http-proxy-middleware": "^3.0.0",
+    "http-tracker": "link:./internal_modules/http-tracker",
+    "matroska-metadata": "^1.0.8",
+    "network-address": "^1.1.2",
+    "tsx": "^4.19.3"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": [
+      "@thaunknown/yencode",
+      "bufferutil",
+      "node-datachannel",
+      "protobufjs",
+      "utf-8-validate",
+      "utp-native"
+    ]
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.6"
+  }
+}

@@ -1,0 +1,39 @@
+services:
+  web:
+    build:
+      context: .
+      dockerfile: nginx.Dockerfile
+    expose:
+      - "80"
+    depends_on:
+      - frontend
+      - backend-proxy
+
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Internal routing, not exposed to host
+    expose:
+      - "3000"
+
+  backend-proxy:
+    build:
+      context: ./backend/proxy
+      dockerfile: Dockerfile
+    expose:
+      - "4000"
+    environment:
+      - GO_BACKEND_URL=http://backend-torrent:5000
+    depends_on:
+      - backend-torrent
+
+  backend-torrent:
+    build:
+      context: ./backend/torrent
+      dockerfile: Dockerfile
+    ports:
+      - "6881:6881"
+      - "6881:6881/udp"
+    expose:
+      - "5000"

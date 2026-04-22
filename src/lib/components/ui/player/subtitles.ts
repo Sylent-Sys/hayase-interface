@@ -1,17 +1,17 @@
-import JASSUB from 'jassub'
-import modernWasmUrl from 'jassub/dist/wasm/jassub-worker-modern.wasm?url'
-import wasmUrl from 'jassub/dist/wasm/jassub-worker.wasm?url'
-import workerUrl from 'jassub/dist/worker/worker.js?worker&url'
-import { writable } from 'simple-store-svelte'
-import { get } from 'svelte/store'
+import JASSUB from "jassub";
+import modernWasmUrl from "jassub/dist/wasm/jassub-worker-modern.wasm?url";
+import wasmUrl from "jassub/dist/wasm/jassub-worker.wasm?url";
+import workerUrl from "jassub/dist/worker/worker.js?worker&url";
+import { writable } from "simple-store-svelte";
+import { get } from "svelte/store";
 
-import type { ResolvedFile } from './resolver'
-import type { ASSEvent, ASSStyle } from 'jassub/dist/worker/util'
-import type { TorrentFile } from 'native'
+import type { ResolvedFile } from "./resolver";
+import type { ASSEvent, ASSStyle } from "jassub/dist/worker/util";
+import type { TorrentFile } from "native";
 
-import native from '$lib/modules/native'
-import { type defaults, settings } from '$lib/modules/settings'
-import { fontRx, HashMap, subRx, subtitleExtensions, toTS } from '$lib/utils'
+import native from "$lib/modules/native";
+import { type defaults, settings } from "$lib/modules/settings";
+import { fontRx, HashMap, subRx, subtitleExtensions, toTS } from "$lib/utils";
 
 const defaultHeader = `[Script Info]
 Title: English (US)
@@ -26,240 +26,342 @@ Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour,
 Style: Default, Roboto Medium,52,&H00FFFFFF,&H00FFFFFF,&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,2.6,0,2,20,20,46,1
 [Events]
 
-`
+`;
 
-const STYLE_OVERRIDES: Record<typeof defaults.subtitleStyle, Pick<ASSStyle, 'FontName' |'Spacing' | 'ScaleX'>> = {
+const STYLE_OVERRIDES: Record<
+  typeof defaults.subtitleStyle,
+  Pick<ASSStyle, "FontName" | "Spacing" | "ScaleX">
+> = {
   none: {
-    FontName: 'Roboto Medium',
+    FontName: "Roboto Medium",
     Spacing: 0,
-    ScaleX: 1
+    ScaleX: 1,
   },
   gandhisans: {
-    FontName: 'Gandhi Sans',
+    FontName: "Gandhi Sans",
     Spacing: 0.2,
-    ScaleX: 0.98
+    ScaleX: 0.98,
   },
   notosans: {
-    FontName: 'Noto Sans',
+    FontName: "Noto Sans",
     Spacing: 0,
-    ScaleX: 0.99
+    ScaleX: 0.99,
   },
   roboto: {
-    FontName: 'Roboto Medium',
+    FontName: "Roboto Medium",
     Spacing: 0,
-    ScaleX: 1
-  }
-}
+    ScaleX: 1,
+  },
+};
 
 const AVAILABLE_FONTS = {
-  'Roboto Medium': '/Roboto.woff2',
-  'Gandhi Sans': '/GandhiSans-Bold.woff2',
-  'Noto Sans': '/NotoSans-Bold.woff2',
-  'Noto Sans JP Bold': '/NotoSansJP.woff2',
-  'Noto Sans KR Bold': '/NotoSansKR.woff2',
-  'Noto Sans HK': '/NotoSansHK.woff2'
-}
+  "Roboto Medium": "/Roboto.woff2",
+  "Gandhi Sans": "/GandhiSans-Bold.woff2",
+  "Noto Sans": "/NotoSans-Bold.woff2",
+  "Noto Sans JP Bold": "/NotoSansJP.woff2",
+  "Noto Sans KR Bold": "/NotoSansKR.woff2",
+  "Noto Sans HK": "/NotoSansHK.woff2",
+};
 
 const LANGUAGE_OVERRIDES: Record<string, string> = {
-  jpn: 'Noto Sans JP Bold',
-  kor: 'Noto Sans KR Bold',
-  chi: 'Noto Sans HK',
-  ja: 'Noto Sans JP Bold',
-  ko: 'Noto Sans KR Bold',
-  zh: 'Noto Sans HK'
-}
+  jpn: "Noto Sans JP Bold",
+  kor: "Noto Sans KR Bold",
+  chi: "Noto Sans HK",
+  ja: "Noto Sans JP Bold",
+  ko: "Noto Sans KR Bold",
+  zh: "Noto Sans HK",
+};
 
-function detectCJKLanguage (str: string) {
-  const japaneseRegex = /[\u3040-\u309f\u30a0-\u30ff]/
-  const koreanRegex = /[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\ud7b0-\ud7ff]/
-  const chineseRegex = /[\u4e00-\u9fff\u3400-\u4dbf]/
+function detectCJKLanguage(str: string) {
+  const japaneseRegex = /[\u3040-\u309f\u30a0-\u30ff]/;
+  const koreanRegex =
+    /[\uac00-\ud7af\u1100-\u11ff\u3130-\u318f\ua960-\ua97f\ud7b0-\ud7ff]/;
+  const chineseRegex = /[\u4e00-\u9fff\u3400-\u4dbf]/;
 
   for (let i = 0; i < str.length; i += 10000) {
-    const chunk = str.slice(i, i + 10000)
+    const chunk = str.slice(i, i + 10000);
 
-    if (japaneseRegex.test(chunk)) return 'jpn'
-    if (koreanRegex.test(chunk)) return 'kor'
-    if (chineseRegex.test(chunk)) return 'chi'
+    if (japaneseRegex.test(chunk)) return "jpn";
+    if (koreanRegex.test(chunk)) return "kor";
+    if (chineseRegex.test(chunk)) return "chi";
   }
 
-  return null
+  return null;
 }
 
-const stylesRx = /^Style:[^,]*/gm
+const stylesRx = /^Style:[^,]*/gm;
 export default class Subtitles {
-  video?: HTMLVideoElement
-  canvas?: HTMLCanvasElement
-  selected: ResolvedFile
-  fonts: string[]
-  jassub: JASSUB | null = null
-  current = writable<number | string>(-1)
-  set = get(settings)
+  video?: HTMLVideoElement;
+  canvas?: HTMLCanvasElement;
+  selected: ResolvedFile;
+  fonts: string[];
+  jassub: JASSUB | null = null;
+  private subtitleSyncGeneration = 0;
+  current = writable<number | string>(-1);
+  set = get(settings);
 
-  _tracks = writable<Record<number | string, { events: HashMap<{ text: string, time: number, duration: number, style?: string }, ASSEvent>, meta: { language?: string, type: string, header: string, number: string, name?: string }, styles: Record<string | number, number> }>>({})
+  _tracks = writable<
+    Record<
+      number | string,
+      {
+        events: HashMap<
+          { text: string; time: number; duration: number; style?: string },
+          ASSEvent
+        >;
+        meta: {
+          language?: string;
+          type: string;
+          header: string;
+          number: string;
+          name?: string;
+        };
+        styles: Record<string | number, number>;
+      }
+    >
+  >({});
 
-  constructor (video: HTMLVideoElement | undefined, otherFiles: TorrentFile[], selected: ResolvedFile, canvas?: HTMLCanvasElement) {
-    this.video = video
-    this.canvas = canvas
-    this.selected = selected
-    this.fonts = [...otherFiles.filter(file => fontRx.test(file.name)).map(file => file.url)]
+  constructor(
+    video: HTMLVideoElement | undefined,
+    otherFiles: TorrentFile[],
+    selected: ResolvedFile,
+    canvas?: HTMLCanvasElement,
+  ) {
+    this.video = video;
+    this.canvas = canvas;
+    this.selected = selected;
+    this.fonts = [
+      ...otherFiles
+        .filter((file) => fontRx.test(file.name))
+        .map((file) => file.url),
+    ];
 
-    this.current.subscribe(value => {
-      this.selectCaptions(value)
-    })
+    this.current.subscribe((value) => {
+      this.selectCaptions(value);
+    });
 
-    settings.subscribe(set => {
-      this._applyStyleOverride(set.subtitleStyle)
-    })
+    settings.subscribe((set) => {
+      this._applyStyleOverride(set.subtitleStyle);
+    });
 
-    const subFiles = otherFiles.filter(({ name }) => subRx.test(name))
+    const subFiles = otherFiles.filter(({ name }) => subRx.test(name));
 
     const fetchAndLoad = async (file: TorrentFile) => {
-      const res = await fetch(file.url)
-      const blob = await res.blob()
-      await this.addSingleSubtitleFile(new File([blob], file.name))
-    }
+      const res = await fetch(file.url);
+      const blob = await res.blob();
+      await this.addSingleSubtitleFile(new File([blob], file.name));
+    };
 
     if (subFiles.length === 1) {
-      fetchAndLoad(subFiles[0]!)
+      fetchAndLoad(subFiles[0]!);
     } else if (subFiles.length > 1) {
-      const videoName = selected.name.substring(0, selected.name.lastIndexOf('.')) || selected.name
+      const videoName =
+        selected.name.substring(0, selected.name.lastIndexOf(".")) ||
+        selected.name;
       for (const file of subFiles) {
         if (file.name.includes(videoName)) {
-          fetchAndLoad(file)
+          fetchAndLoad(file);
         }
       }
     }
 
-    const tracks = native.tracks(this.selected.hash, this.selected.id).then(async tracklist => {
-      for (const track of tracklist) {
-        const newtrack = this.track(track.number)
-        newtrack.styles.Default = 0
-        if (track.header?.startsWith('[Script Info]')) track.type = 'ass'
-        track.header ??= defaultHeader
-        newtrack.meta = track as { language?: string, type: string, header: string, number: string, name?: string }
-        const styleMatches = track.header.match(stylesRx)
-        if (!styleMatches) continue
-        for (let i = 0; i < styleMatches.length; ++i) {
-          newtrack.styles[styleMatches[i]!.replace('Style:', '').trim()] = i + 1
-        }
-      }
-      await this.initSubtitleRenderer()
-
-      const tracks = Object.entries(this._tracks.value)
-
-      if (tracks.length) {
-        if (!this.set.subtitleLanguage) return // if lang set to none dont autoselect
-        if (tracks.length === 1) {
-          await this.selectCaptions(tracks[0]![0])
-        } else {
-          const wantedTrack = tracks.filter(([_, { meta }]) => {
-            return (meta.language ?? 'eng') === this.set.subtitleLanguage
-          })
-          if (wantedTrack.length) {
-            if (wantedTrack.length === 1) return await this.selectCaptions(wantedTrack[0]![0])
-
-            const nonForced = wantedTrack.find(([_, { meta }]) => {
-              return !meta.name?.toLowerCase().includes('forced')
-            }) ?? wantedTrack[0]!
-
-            return await this.selectCaptions(nonForced[0])
+    const tracks = native
+      .tracks(this.selected.hash, this.selected.id)
+      .then(async (tracklist) => {
+        for (const track of tracklist) {
+          const newtrack = this.track(track.number);
+          newtrack.styles.Default = 0;
+          if (track.header?.startsWith("[Script Info]")) track.type = "ass";
+          track.header ??= defaultHeader;
+          newtrack.meta = track as {
+            language?: string;
+            type: string;
+            header: string;
+            number: string;
+            name?: string;
+          };
+          const styleMatches = track.header.match(stylesRx);
+          if (!styleMatches) continue;
+          for (let i = 0; i < styleMatches.length; ++i) {
+            newtrack.styles[styleMatches[i]!.replace("Style:", "").trim()] =
+              i + 1;
           }
-
-          const englishTrack = tracks.filter(([_, { meta }]) => meta.language == null || meta.language === 'eng')
-          if (englishTrack.length) {
-            if (englishTrack.length === 1) return await this.selectCaptions(englishTrack[0]![0])
-
-            const nonForced = englishTrack.find(([_, { meta }]) => {
-              return !meta.name?.toLowerCase().includes('forced')
-            }) ?? englishTrack[0]!
-
-            return await this.selectCaptions(nonForced[0])
-          }
-
-          await this.selectCaptions(tracks[0]![0])
         }
-      }
-    }).catch(console.error)
+        await this.initSubtitleRenderer();
 
-    native.subtitles(this.selected.hash, this.selected.id, async (subtitle: { text: string, time: number, duration: number, style?: string }, trackNumber) => {
-      await tracks
-      const { events, meta, styles } = this.track(trackNumber)
-      if (events.has(subtitle)) return
-      const event = this.constructSub(subtitle, meta.type !== 'ass', events.size, styles[subtitle.style ?? 'Default'] ?? 0)
-      events.add(subtitle, event)
-      if (Number(this.current.value) === trackNumber) {
-        await this.jassub?.ready
-        this.jassub?.renderer.createEvent(event)
-      }
-    }).catch(console.error)
+        const tracks = Object.entries(this._tracks.value);
 
-    native.attachments(this.selected.hash, this.selected.id).then(async attachments => {
-      const filtered = attachments.filter(attachment => (fontRx.test(attachment.filename) || attachment.mimetype.toLowerCase().includes('font')) && !this.fonts.includes(attachment.url))
-      const urls = filtered.map(a => a.url)
-      this.fonts.push(...urls)
-      await this.jassub?.ready
-      await this.jassub?.renderer.addFonts(urls)
-    }).catch(console.error)
+        if (tracks.length) {
+          if (!this.set.subtitleLanguage) return; // if lang set to none dont autoselect
+          if (tracks.length === 1) {
+            await this.selectCaptions(tracks[0]![0]);
+          } else {
+            const wantedTrack = tracks.filter(([_, { meta }]) => {
+              return (meta.language ?? "eng") === this.set.subtitleLanguage;
+            });
+            if (wantedTrack.length) {
+              if (wantedTrack.length === 1)
+                return await this.selectCaptions(wantedTrack[0]![0]);
+
+              const nonForced =
+                wantedTrack.find(([_, { meta }]) => {
+                  return !meta.name?.toLowerCase().includes("forced");
+                }) ?? wantedTrack[0]!;
+
+              return await this.selectCaptions(nonForced[0]);
+            }
+
+            const englishTrack = tracks.filter(
+              ([_, { meta }]) =>
+                meta.language == null || meta.language === "eng",
+            );
+            if (englishTrack.length) {
+              if (englishTrack.length === 1)
+                return await this.selectCaptions(englishTrack[0]![0]);
+
+              const nonForced =
+                englishTrack.find(([_, { meta }]) => {
+                  return !meta.name?.toLowerCase().includes("forced");
+                }) ?? englishTrack[0]!;
+
+              return await this.selectCaptions(nonForced[0]);
+            }
+
+            await this.selectCaptions(tracks[0]![0]);
+          }
+        }
+      })
+      .catch(console.error);
+
+    native
+      .subtitles(
+        this.selected.hash,
+        this.selected.id,
+        async (
+          subtitle: {
+            text: string;
+            time: number;
+            duration: number;
+            style?: string;
+          },
+          trackNumber,
+        ) => {
+          await tracks;
+          const { events, meta, styles } = this.track(trackNumber);
+          if (events.has(subtitle)) return;
+          const event = this.constructSub(
+            subtitle,
+            meta.type !== "ass",
+            events.size,
+            styles[subtitle.style ?? "Default"] ?? 0,
+          );
+          events.add(subtitle, event);
+          if (Number(this.current.value) === trackNumber) {
+            await this.jassub?.ready;
+            await this.jassub?.renderer.createEvent(event);
+          }
+        },
+      )
+      .catch(console.error);
+
+    native
+      .attachments(this.selected.hash, this.selected.id)
+      .then(async (attachments) => {
+        const filtered = attachments.filter(
+          (attachment) =>
+            (fontRx.test(attachment.filename) ||
+              attachment.mimetype.toLowerCase().includes("font")) &&
+            !this.fonts.includes(attachment.url),
+        );
+        const urls = filtered.map((a) => a.url);
+        this.fonts.push(...urls);
+        await this.jassub?.ready;
+        await this.jassub?.renderer.addFonts(urls);
+      })
+      .catch(console.error);
   }
 
-  async handleTransfer (e: { dataTransfer?: DataTransfer | null, clipboardData?: DataTransfer | null } & Event) {
-    e.preventDefault()
-    const promises = [...(e.dataTransfer ?? e.clipboardData)!.items].map(item => {
-      const type = item.type
-      return new Promise<File>(resolve => item.kind === 'string' ? item.getAsString(text => resolve(new File([text], 'Subtitle.txt', { type }))) : resolve(item.getAsFile()!))
-    })
+  async handleTransfer(
+    e: {
+      dataTransfer?: DataTransfer | null;
+      clipboardData?: DataTransfer | null;
+    } & Event,
+  ) {
+    e.preventDefault();
+    const promises = [...(e.dataTransfer ?? e.clipboardData)!.items].map(
+      (item) => {
+        const type = item.type;
+        return new Promise<File>((resolve) =>
+          item.kind === "string"
+            ? item.getAsString((text) =>
+                resolve(new File([text], "Subtitle.txt", { type })),
+              )
+            : resolve(item.getAsFile()!),
+        );
+      },
+    );
 
     for (const file of await Promise.all(promises)) {
-      if (subRx.test(file.name)) this.addSingleSubtitleFile(file)
+      if (subRx.test(file.name)) this.addSingleSubtitleFile(file);
     }
   }
 
-  pickFile () {
-    const input = document.createElement('input')
-    input.type = 'file'
-    input.accept = subtitleExtensions.map(ext => '.' + ext).join(',')
-    input.multiple = true
-    input.addEventListener('change', () => {
+  pickFile() {
+    const input = document.createElement("input");
+    input.type = "file";
+    input.accept = subtitleExtensions.map((ext) => "." + ext).join(",");
+    input.multiple = true;
+    input.addEventListener("change", () => {
       for (const file of input.files ?? []) {
-        if (subRx.test(file.name)) this.addSingleSubtitleFile(file)
+        if (subRx.test(file.name)) this.addSingleSubtitleFile(file);
       }
-    })
-    input.click()
+    });
+    input.click();
   }
 
-  async addSingleSubtitleFile (file: File) {
+  async addSingleSubtitleFile(file: File) {
     // lets hope there's no more than 1000 subtitle tracks in a file
-    const trackNumber = 1000 + Object.keys(this._tracks.value).length
+    const trackNumber = 1000 + Object.keys(this._tracks.value).length;
 
-    const dot = file.name.lastIndexOf('.')
-    const extension = file.name.substring(dot + 1).toLowerCase()
-    if (!subtitleExtensions.includes(extension)) return
-    const filename = file.name.slice(0, dot)
+    const dot = file.name.lastIndexOf(".");
+    const extension = file.name.substring(dot + 1).toLowerCase();
+    if (!subtitleExtensions.includes(extension)) return;
+    const filename = file.name.slice(0, dot);
     // sub name could contain video name with or without extension, possibly followed by lang, or not.
     const name = filename.includes(this.selected.name)
-      ? filename.replace(this.selected.name, '')
-      : filename.replace(this.selected.name.slice(0, this.selected.name.lastIndexOf('.')), '')
+      ? filename.replace(this.selected.name, "")
+      : filename.replace(
+          this.selected.name.slice(0, this.selected.name.lastIndexOf(".")),
+          "",
+        );
 
-    const convert = Subtitles.convertSubText(await file.text(), extension)
-    if (!convert) return
-    const { header, type } = convert
-    const newtrack = this.track(trackNumber)
-    newtrack.styles.Default = 0
-    newtrack.meta = { type, header, number: '' + trackNumber, name, language: (detectCJKLanguage(header) ?? name.replace(/[,._-]/g, ' ').trim()) || 'Track ' + trackNumber }
-    const styleMatches = header.match(stylesRx)
+    const convert = Subtitles.convertSubText(await file.text(), extension);
+    if (!convert) return;
+    const { header, type } = convert;
+    const newtrack = this.track(trackNumber);
+    newtrack.styles.Default = 0;
+    newtrack.meta = {
+      type,
+      header,
+      number: "" + trackNumber,
+      name,
+      language:
+        (detectCJKLanguage(header) ?? name.replace(/[,._-]/g, " ").trim()) ||
+        "Track " + trackNumber,
+    };
+    const styleMatches = header.match(stylesRx);
     if (styleMatches) {
       for (let i = 0; i < styleMatches.length; ++i) {
-        newtrack.styles[styleMatches[i]!.replace('Style:', '').trim()] = i + 1
+        newtrack.styles[styleMatches[i]!.replace("Style:", "").trim()] = i + 1;
       }
     }
     if (this.current.value === -1) {
-      await this.initSubtitleRenderer()
-      await this.selectCaptions(trackNumber)
+      await this.initSubtitleRenderer();
+      await this.selectCaptions(trackNumber);
     }
   }
 
-  async initSubtitleRenderer () {
-    if (this.jassub) return
+  async initSubtitleRenderer() {
+    if (this.jassub) return;
 
     this.jassub = new JASSUB({
       video: this.video,
@@ -267,29 +369,30 @@ export default class Subtitles {
       subContent: defaultHeader,
       fonts: this.fonts,
       maxRenderHeight: parseInt(this.set.subtitleRenderHeight) || 0,
-      defaultFont: STYLE_OVERRIDES[this.set.subtitleStyle]?.FontName ?? 'roboto medium',
-      queryFonts: this.set.missingFont ? 'localandremote' : false,
+      defaultFont:
+        STYLE_OVERRIDES[this.set.subtitleStyle]?.FontName ?? "roboto medium",
+      queryFonts: this.set.missingFont ? "localandremote" : false,
       workerUrl,
       modernWasmUrl,
       wasmUrl,
-      availableFonts: AVAILABLE_FONTS
-    })
+      availableFonts: AVAILABLE_FONTS,
+    });
 
-    await this.jassub.ready
+    await this.jassub.ready;
 
-    await this._applyStyleOverride(this.set.subtitleStyle)
+    await this._applyStyleOverride(this.set.subtitleStyle);
   }
 
-  lastSubtitleStyle: typeof defaults.subtitleStyle | undefined = undefined
-  async _applyStyleOverride (subtitleStyle: typeof defaults.subtitleStyle) {
-    if (this.lastSubtitleStyle === subtitleStyle) return
-    if (this.jassub) this.lastSubtitleStyle = subtitleStyle
-    if (subtitleStyle !== 'none') {
+  lastSubtitleStyle: typeof defaults.subtitleStyle | undefined = undefined;
+  async _applyStyleOverride(subtitleStyle: typeof defaults.subtitleStyle) {
+    if (this.lastSubtitleStyle === subtitleStyle) return;
+    if (this.jassub) this.lastSubtitleStyle = subtitleStyle;
+    if (subtitleStyle !== "none") {
       const overrideStyle: ASSStyle = {
-        Name: 'DialogueStyleOverride',
+        Name: "DialogueStyleOverride",
         FontSize: 72,
-        PrimaryColour: 0xFFFFFF00,
-        SecondaryColour: 0xFF000000,
+        PrimaryColour: 0xffffff00,
+        SecondaryColour: 0xff000000,
         OutlineColour: 0,
         BackColour: 0,
         Bold: 1,
@@ -309,162 +412,228 @@ export default class Subtitles {
         treat_fontname_as_pattern: 0,
         Blur: 0,
         Justify: 0,
-        ...STYLE_OVERRIDES[subtitleStyle]
-      }
-      await this.jassub?.renderer.styleOverride(overrideStyle)
-      await this.jassub?.renderer.setDefaultFont(overrideStyle.FontName)
+        ...STYLE_OVERRIDES[subtitleStyle],
+      };
+      await this.jassub?.renderer.styleOverride(overrideStyle);
+      await this.jassub?.renderer.setDefaultFont(overrideStyle.FontName);
     } else {
-      await this.jassub?.renderer.disableStyleOverride()
-      await this.jassub?.renderer.setDefaultFont('roboto medium')
+      await this.jassub?.renderer.disableStyleOverride();
+      await this.jassub?.renderer.setDefaultFont("roboto medium");
     }
   }
 
-  track (trackNumber: number | string) {
-    const tracks = this._tracks.value
+  track(trackNumber: number | string) {
+    const tracks = this._tracks.value;
     if (tracks[trackNumber]) {
-      return tracks[trackNumber]
+      return tracks[trackNumber];
     } else {
       tracks[trackNumber] = {
         events: new HashMap(),
         // @ts-expect-error initializing with empty object
         meta: {},
-        styles: {}
-      }
-      return tracks[trackNumber]!
+        styles: {},
+      };
+      return tracks[trackNumber]!;
     }
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  constructSub (subtitle: any, isNotAss: boolean, subtitleIndex: number, Style: number): ASSEvent {
-    let Text = subtitle.text ?? ''
-    if (isNotAss) { // converts VTT or other to SSA
-      const matches: string[] | null = Text.match(/<[^>]+>/g) // create array of all tags
+  constructSub(
+    subtitle: any,
+    isNotAss: boolean,
+    subtitleIndex: number,
+    Style: number,
+  ): ASSEvent {
+    let Text = subtitle.text ?? "";
+    if (isNotAss) {
+      // converts VTT or other to SSA
+      const matches: string[] | null = Text.match(/<[^>]+>/g); // create array of all tags
       if (matches) {
-        matches.forEach(match => {
-          if (match.includes('</')) { // check if its a closing tag
-            Text = Text.replace(match, match.replace('</', '{\\').replace('>', '0}'))
+        matches.forEach((match) => {
+          if (match.includes("</")) {
+            // check if its a closing tag
+            Text = Text.replace(
+              match,
+              match.replace("</", "{\\").replace(">", "0}"),
+            );
           } else {
-            Text = Text.replace(match, match.replace('<', '{\\').replace('>', '1}'))
+            Text = Text.replace(
+              match,
+              match.replace("<", "{\\").replace(">", "1}"),
+            );
           }
-        })
+        });
       }
       // replace all html special tags with normal ones
-      Text = Text.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, '\\h').replace(/\r?\n/g, '\\N')
+      Text = Text.replace(/&amp;/g, "&")
+        .replace(/&lt;/g, "<")
+        .replace(/&gt;/g, ">")
+        .replace(/&nbsp;/g, "\\h")
+        .replace(/\r?\n/g, "\\N");
     } else {
-      Text = Text.replace(/\r?\n/g, '')
+      Text = Text.replace(/\r?\n/g, "");
     }
     return {
       Start: subtitle.time,
       Duration: subtitle.duration,
       Style,
-      Name: subtitle.name ?? '',
+      Name: subtitle.name ?? "",
       MarginL: Number(subtitle.marginL) || 0,
       MarginR: Number(subtitle.marginR) || 0,
       MarginV: Number(subtitle.marginV) || 0,
-      Effect: subtitle.effect ?? '',
+      Effect: subtitle.effect ?? "",
       Text,
       ReadOrder: subtitle.readOrder ?? subtitleIndex,
-      Layer: Number(subtitle.layer) || 0
-    }
+      Layer: Number(subtitle.layer) || 0,
+    };
   }
 
-  async selectCaptions (trackNumber: number | string) {
-    this.current.value = trackNumber
+  async selectCaptions(trackNumber: number | string) {
+    this.current.value = trackNumber;
 
-    if (!this.jassub) return
+    const generation = ++this.subtitleSyncGeneration;
+    await this.syncTrackToRenderer(trackNumber, generation);
+  }
 
-    await this.jassub.ready
+  async resyncCurrentTrack() {
+    const generation = ++this.subtitleSyncGeneration;
+    await this.syncTrackToRenderer(this.current.value, generation);
+  }
+
+  private async syncTrackToRenderer(
+    trackNumber: number | string,
+    generation: number,
+  ) {
+    if (!this.jassub) return;
+
+    await this.jassub.ready;
+    if (generation !== this.subtitleSyncGeneration) return;
+
     if (trackNumber === -1) {
-      await this.jassub.renderer.setTrack(defaultHeader)
-      return await this.jassub.resize()
+      await this.jassub.renderer.setTrack(defaultHeader);
+      if (generation !== this.subtitleSyncGeneration) return;
+      await this.jassub.resize();
+      return;
     }
 
-    const track = this._tracks.value[trackNumber]
-    if (!track) return
+    const track = this._tracks.value[trackNumber];
+    if (!track) return;
 
-    await this.jassub.renderer.setTrack(track.meta.header.slice(0, -1))
-    for (const subtitle of track.events) await this.jassub.renderer.createEvent(subtitle)
-    if (LANGUAGE_OVERRIDES[track.meta.language ?? '']) {
-      const name = LANGUAGE_OVERRIDES[track.meta.language ?? '']!
-      await this.jassub.renderer.setDefaultFont(name)
-    } else {
-      await this.jassub.renderer.setDefaultFont('roboto medium')
+    const events = Array.from(track.events.values());
+    await this.jassub.renderer.setTrack(track.meta.header.slice(0, -1));
+    if (generation !== this.subtitleSyncGeneration) return;
+
+    for (const subtitle of events) {
+      await this.jassub.renderer.createEvent(subtitle);
+      if (generation !== this.subtitleSyncGeneration) return;
     }
-    await this.jassub.resize()
+
+    const defaultFont =
+      LANGUAGE_OVERRIDES[track.meta.language ?? ""] ?? "roboto medium";
+    await this.jassub.renderer.setDefaultFont(defaultFont);
+    if (generation !== this.subtitleSyncGeneration) return;
+
+    await this.jassub.resize();
   }
 
-  destroy () {
-    this.jassub?.destroy()
+  destroy() {
+    this.jassub?.destroy();
     for (const { events } of Object.values(this._tracks.value)) {
-      events.clear()
+      events.clear();
     }
   }
 
-  static convertSubText (text: string, type: string) {
-    const srtRx = /(?:\d+\r?\n)?(\S{9,12})\s?-->\s?(\S{9,12})(.*)\r?\n([\s\S]*)$/i
+  static convertSubText(text: string, type: string) {
+    const srtRx =
+      /(?:\d+\r?\n)?(\S{9,12})\s?-->\s?(\S{9,12})(.*)\r?\n([\s\S]*)$/i;
     const srt = (text: string) => {
-      const subtitles = []
-      const replaced = text.replace(/\r/g, '')
+      const subtitles = [];
+      const replaced = text.replace(/\r/g, "");
       for (const split of replaced.split(/\r?\n\r?\n/)) {
-        const match: string[] | null = split.match(srtRx)
-        if (match?.length !== 5) continue
+        const match: string[] | null = split.match(srtRx);
+        if (match?.length !== 5) continue;
         // timestamps
-        match[1] = match[1]!.match(/.*[.,]\d{2}/)![0]
-        match[2] = match[2]!.match(/.*[.,]\d{2}/)![0]
+        match[1] = match[1]!.match(/.*[.,]\d{2}/)![0];
+        match[2] = match[2]!.match(/.*[.,]\d{2}/)![0];
         if (match[1]?.length === 9) {
-          match[1] = '0:' + match[1]
+          match[1] = "0:" + match[1];
         } else {
-          if (match[1]?.[0] === '0') {
-            match[1] = match[1].substring(1)
+          if (match[1]?.[0] === "0") {
+            match[1] = match[1].substring(1);
           }
         }
-        match[1]?.replace(',', '.')
+        match[1]?.replace(",", ".");
         if (match[2]?.length === 9) {
-          match[2] = '0:' + match[2]
+          match[2] = "0:" + match[2];
         } else {
-          if (match[2]?.[0] === '0') {
-            match[2] = match[2].substring(1)
+          if (match[2]?.[0] === "0") {
+            match[2] = match[2].substring(1);
           }
         }
-        match[2]?.replace(',', '.')
+        match[2]?.replace(",", ".");
         // create array of all tags
-        const matches = match[4]?.match(/<[^>]+>/g)
+        const matches = match[4]?.match(/<[^>]+>/g);
         if (matches) {
-          matches.forEach(matched => {
-            if (matched.includes('</')) { // check if its a closing tag
-              match[4] = match[4]!.replace(matched, matched.replace('</', '{\\').replace('>', '0}'))
+          matches.forEach((matched) => {
+            if (matched.includes("</")) {
+              // check if its a closing tag
+              match[4] = match[4]!.replace(
+                matched,
+                matched.replace("</", "{\\").replace(">", "0}"),
+              );
             } else {
-              match[4] = match[4]!.replace(matched, matched.replace('<', '{\\').replace('>', '1}'))
+              match[4] = match[4]!.replace(
+                matched,
+                matched.replace("<", "{\\").replace(">", "1}"),
+              );
             }
-          })
+          });
         }
-        subtitles.push('Dialogue: 0,' + match[1].replace(',', '.') + ',' + match[2].replace(',', '.') + ',Default,,0,0,0,,' + match[4]!.replace(/\r?\n/g, '\\N'))
+        subtitles.push(
+          "Dialogue: 0," +
+            match[1].replace(",", ".") +
+            "," +
+            match[2].replace(",", ".") +
+            ",Default,,0,0,0,," +
+            match[4]!.replace(/\r?\n/g, "\\N"),
+        );
       }
-      return subtitles
-    }
-    const subRx = /[{[](\d+)[}\]][{[](\d+)[}\]](.+)/i
+      return subtitles;
+    };
+    const subRx = /[{[](\d+)[}\]][{[](\d+)[}\]](.+)/i;
     const sub = (text: string) => {
-      const subtitles = []
-      const replaced = text.replace(/\r/g, '')
-      let frames = 1000 / Number(replaced.match(subRx)?.[3])
-      if (!frames || isNaN(frames)) frames = 41.708
-      for (const split of replaced.split('\r?\n')) {
-        const match = split.match(subRx)
-        if (match) subtitles.push('Dialogue: 0,' + toTS((Number(match[1]) * frames) / 1000, 1) + ',' + toTS((Number(match[2]) * frames) / 1000, 1) + ',Default,,0,0,0,,' + match[3]?.replace('|', '\\N'))
+      const subtitles = [];
+      const replaced = text.replace(/\r/g, "");
+      let frames = 1000 / Number(replaced.match(subRx)?.[3]);
+      if (!frames || isNaN(frames)) frames = 41.708;
+      for (const split of replaced.split("\r?\n")) {
+        const match = split.match(subRx);
+        if (match)
+          subtitles.push(
+            "Dialogue: 0," +
+              toTS((Number(match[1]) * frames) / 1000, 1) +
+              "," +
+              toTS((Number(match[2]) * frames) / 1000, 1) +
+              ",Default,,0,0,0,," +
+              match[3]?.replace("|", "\\N"),
+          );
       }
-      return subtitles
-    }
-    if (type === 'ass') {
-      return { type: 'ass', header: text }
-    } else if (type === 'srt' || type === 'vtt') {
-      return { type: 'srt', header: defaultHeader + srt(text).join('\n') }
-    } else if (type === 'sub') {
-      return { type: 'sub', header: defaultHeader + sub(text).join('\n') }
+      return subtitles;
+    };
+    if (type === "ass") {
+      return { type: "ass", header: text };
+    } else if (type === "srt" || type === "vtt") {
+      return { type: "srt", header: defaultHeader + srt(text).join("\n") };
+    } else if (type === "sub") {
+      return { type: "sub", header: defaultHeader + sub(text).join("\n") };
     } else {
       // subbers have a tendency to not set the extensions at all
-      if (text.startsWith('[Script Info]')) return { type: 'ass', header: text }
-      if (srtRx.test(text)) return { type: 'srt', header: defaultHeader + srt(text).join('\n') }
-      if (subRx.test(text)) return { type: 'sub', header: defaultHeader + sub(text).join('\n') }
+      if (text.startsWith("[Script Info]"))
+        return { type: "ass", header: text };
+      if (srtRx.test(text))
+        return { type: "srt", header: defaultHeader + srt(text).join("\n") };
+      if (subRx.test(text))
+        return { type: "sub", header: defaultHeader + sub(text).join("\n") };
     }
   }
 }

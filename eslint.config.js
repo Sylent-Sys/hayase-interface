@@ -4,6 +4,9 @@ import tseslint from 'typescript-eslint'
 import svelteConfig from './svelte.config.js'
 
 export default tseslint.config(
+  {
+    ignores: ['build/', '.svelte-kit/', 'node_modules/', 'backend/']
+  },
   ...config(),
   {
     languageOptions: {
@@ -12,7 +15,6 @@ export default tseslint.config(
         svelteConfig
       }
     },
-    ignores: ['build/', '.svelte-kit/', 'node_modules/'],
     rules: {
       '@typescript-eslint/prefer-nullish-coalescing': [
         'error',
