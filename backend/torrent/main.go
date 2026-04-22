@@ -537,13 +537,14 @@ func handleAdd(w http.ResponseWriter, r *http.Request) {
 	hash := t.InfoHash().HexString()
 
 	if err := registerTorrentForSession(sessionID, hash, t); err != nil {
+		status := http.StatusInternalServerError
+		message := "failed to register torrent"
 		if errors.Is(err, errMaxTorrentCapacity) {
-			t.Drop()
-			http.Error(w, err.Error(), http.StatusServiceUnavailable)
-			return
+			status = http.StatusServiceUnavailable
+			message = err.Error()
 		}
 		t.Drop()
-		http.Error(w, "failed to register torrent", http.StatusInternalServerError)
+		http.Error(w, message, status)
 		return
 	}
 
