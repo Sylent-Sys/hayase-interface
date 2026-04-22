@@ -591,8 +591,7 @@ func handleRemoveAll(w http.ResponseWriter, r *http.Request) {
 
 	removed := 0
 	for _, hash := range hashes {
-		if r.Context().Err() != nil {
-			logKV("request_canceled", "handler", "remove-all", "session", sessionID)
+		if !ensureRequestContext(w, r) {
 			return
 		}
 		if releaseTorrentForSession(sessionID, hash) {
@@ -718,10 +717,6 @@ func handleStream(w http.ResponseWriter, r *http.Request) {
 	reader.SetReadahead(10 * 1024 * 1024) // 10MB
 	reader.SetResponsive()
 	defer reader.Close()
-
-	if !ensureRequestContext(w, r) {
-		return
-	}
 
 	http.ServeContent(w, r, filepath.Base(f.DisplayPath()), time.Time{}, reader)
 }
