@@ -204,7 +204,8 @@ export default class Subtitles {
 
               const nonForced =
                 wantedTrack.find(([_, { meta }]) => {
-                  return !meta.name?.toLowerCase().includes("forced");
+                  const normalizedName = meta.name?.toLowerCase() ?? "";
+                  return !normalizedName.includes("forced");
                 }) ?? wantedTrack[0]!;
 
               return await this.selectCaptions(nonForced[0]);
@@ -220,7 +221,8 @@ export default class Subtitles {
 
               const nonForced =
                 englishTrack.find(([_, { meta }]) => {
-                  return !meta.name?.toLowerCase().includes("forced");
+                  const normalizedName = meta.name?.toLowerCase() ?? "";
+                  return !normalizedName.includes("forced");
                 }) ?? englishTrack[0]!;
 
               return await this.selectCaptions(nonForced[0]);
@@ -267,10 +269,14 @@ export default class Subtitles {
       .attachments(this.selected.hash, this.selected.id)
       .then(async (attachments) => {
         const filtered = attachments.filter(
-          (attachment) =>
-            (fontRx.test(attachment.filename) ||
-              attachment.mimetype.toLowerCase().includes("font")) &&
-            !this.fonts.includes(attachment.url),
+          (attachment) => {
+            const filename = attachment.filename ?? "";
+            const mimetype = attachment.mimetype?.toLowerCase() ?? "";
+            return (
+              (fontRx.test(filename) || mimetype.includes("font")) &&
+              !this.fonts.includes(attachment.url)
+            );
+          },
         );
         const urls = filtered.map((a) => a.url);
         this.fonts.push(...urls);
