@@ -1,5 +1,6 @@
 FROM golang:1.25-alpine AS builder
 
+ENV GOPROXY=https://goproxy.io,direct
 ENV GOTOOLCHAIN=auto
 
 WORKDIR /app
