@@ -362,6 +362,7 @@
 
     playbackTimeAtStart = await startBackendVideoIterator(time)
     setCurrentTime()
+    await subtitles?.resyncCurrentTrack()
 
     if (!wasPaused && !ended && paused) {
       await play()
