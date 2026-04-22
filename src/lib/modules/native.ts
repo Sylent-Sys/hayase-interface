@@ -32,6 +32,65 @@ async function extractInfoHash(
 
 let activeHash = "";
 let activeSubtitlesES: EventSource | null = null;
+let activeTorrentInfoES: EventSource | null = null;
+
+interface TorrentInfoStreamHandlers {
+  onStatus: (info: TorrentInfo) => void;
+  onFallback: () => void;
+  onError?: (error: unknown) => void;
+}
+
+function closeTorrentInfoStream() {
+  if (activeTorrentInfoES) {
+    activeTorrentInfoES.close();
+    activeTorrentInfoES = null;
+  }
+}
+
+export function stopTorrentInfoStream() {
+  closeTorrentInfoStream();
+}
+
+export function startTorrentInfoStream(
+  hash: string,
+  handlers: TorrentInfoStreamHandlers,
+): () => void {
+  closeTorrentInfoStream();
+
+  try {
+    const source = new EventSource(`/api/torrent/${hash}/status/stream`);
+    activeTorrentInfoES = source;
+
+    source.addEventListener("status", (event) => {
+      try {
+        const message = event;
+        const data = JSON.parse(message.data) as TorrentInfo;
+        handlers.onStatus(data);
+      } catch (err) {
+        handlers.onError?.(err);
+      }
+    });
+
+    source.addEventListener("fallback", () => {
+      handlers.onFallback();
+    });
+
+    source.onerror = (err) => {
+      handlers.onError?.(err);
+      handlers.onFallback();
+    };
+  } catch (err) {
+    handlers.onError?.(err);
+    handlers.onFallback();
+  }
+
+  return () => {
+    if (activeTorrentInfoES) {
+      activeTorrentInfoES.close();
+      activeTorrentInfoES = null;
+    }
+  };
+}
 
 /**
  * Calls the backend WebTorrent service and returns TorrentFile[] for the
@@ -338,7 +397,6 @@ export default Object.assign<Native, Partial<Native>>(
     debug: async () => undefined,
     profile: async () => undefined,
     updateToNewEndpoint: async () => undefined,
-    // @ts-expect-error idk
   },
-  globalThis.native as Partial<Native>,
+  (globalThis as typeof globalThis & { native?: Partial<Native> }).native ?? {},
 );

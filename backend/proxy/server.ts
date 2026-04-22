@@ -1,3 +1,5 @@
+/// <reference path="./matroska-metadata.d.ts" />
+
 import express from "express";
 import cors from "cors";
 import os from "node:os";
@@ -38,8 +40,16 @@ const METADATA_CACHE_TTL_MS = Number(
 const MAX_METADATA_CACHE_ENTRIES = Number(
   process.env.MAX_METADATA_CACHE_ENTRIES || 128,
 );
+const STATUS_STREAM_INTERVAL_MS = Number(
+  process.env.STATUS_STREAM_INTERVAL_MS || 500,
+);
+const STATUS_STREAM_HEARTBEAT_MS = Number(
+  process.env.STATUS_STREAM_HEARTBEAT_MS || 15000,
+);
 
 let activeStreams = 0;
+let activeStatusStreams = 0;
+let statusStreamFallbackHits = 0;
 
 // Maps sessionId → Map<fileKey, count> for active streams.
 // This allows multiplexing multiple range requests for the same file.
@@ -87,11 +97,15 @@ type AttachmentItem = {
 
 type ProxyMetricsResponse = {
   activeStreams: number;
+  activeStatusStreams: number;
+  statusStreamFallbackHits: number;
   sessionActiveFilesSize: number;
   metadataCacheSize: number;
   limits: {
     maxConcurrentStreams: number;
     maxConcurrentStreamsPerSession: number;
+    statusStreamIntervalMs: number;
+    statusStreamHeartbeatMs: number;
     metadataCacheTtlMs: number;
     maxMetadataCacheEntries: number;
   };
@@ -101,6 +115,60 @@ type ProxyMetricsResponse = {
 
 // Bounded cache to avoid unlimited parser growth over time.
 const metadatamap = new Map<string, MetadataEntry>();
+
+function mapGoStatus(goStatus: GoStatusResponse) {
+  return {
+    name: goStatus.name,
+    progress: goStatus.progress,
+    size: {
+      total: goStatus.total,
+      downloaded: goStatus.downloaded,
+      uploaded: goStatus.uploaded,
+    },
+    speed: {
+      down: goStatus.downSpeed,
+      up: goStatus.upSpeed,
+    },
+    time: {
+      remaining: 0,
+      elapsed: 0,
+    },
+    peers: {
+      seeders: goStatus.peers,
+      leechers: 0,
+      wires: goStatus.peers,
+    },
+    pieces: {
+      total: goStatus.pieces,
+      size: goStatus.pieceSize,
+    },
+    hash: goStatus.infoHash,
+    ready: goStatus.ready,
+    paused: false,
+    done: goStatus.progress === 1,
+  };
+}
+
+async function fetchMappedTorrentStatus(sessionId: string, hash: string) {
+  const response = await fetchWithTimeout(`${GO_BACKEND_URL}/status/${hash}`, {
+    headers: withSessionHeader(sessionId),
+  });
+
+  if (!response.ok) {
+    const message = await response.text();
+    return {
+      ok: false as const,
+      status: response.status,
+      message,
+    };
+  }
+
+  const goStatus = (await response.json()) as GoStatusResponse;
+  return {
+    ok: true as const,
+    payload: mapGoStatus(goStatus),
+  };
+}
 
 // Mock WebTorrent File for matroska-metadata
 class MockWebTorrentFile extends EventEmitter {
@@ -278,16 +346,23 @@ app.get("/protocol/status", (req, res) => {
 
 app.get("/metrics", (_req, res) => {
   const sessionStreams = Array.from(sessionActiveFiles.entries())
-    .map(([sessionId, filesMap]) => ({ sessionId, activeStreams: filesMap.size }))
+    .map(([sessionId, filesMap]) => ({
+      sessionId,
+      activeStreams: filesMap.size,
+    }))
     .sort((a, b) => b.activeStreams - a.activeStreams);
 
   const payload: ProxyMetricsResponse = {
     activeStreams,
+    activeStatusStreams,
+    statusStreamFallbackHits,
     sessionActiveFilesSize: sessionActiveFiles.size,
     metadataCacheSize: metadatamap.size,
     limits: {
       maxConcurrentStreams: MAX_CONCURRENT_STREAMS,
       maxConcurrentStreamsPerSession: MAX_CONCURRENT_STREAMS_PER_SESSION,
+      statusStreamIntervalMs: STATUS_STREAM_INTERVAL_MS,
+      statusStreamHeartbeatMs: STATUS_STREAM_HEARTBEAT_MS,
       metadataCacheTtlMs: METADATA_CACHE_TTL_MS,
       maxMetadataCacheEntries: MAX_METADATA_CACHE_ENTRIES,
     },
@@ -354,51 +429,75 @@ app.get("/torrent/:hash/status", async (req, res) => {
   const { hash } = req.params;
   const sessionId = getSessionId(req, res);
   try {
-    const response = await fetchWithTimeout(
-      `${GO_BACKEND_URL}/status/${hash}`,
-      {
-        headers: withSessionHeader(sessionId),
-      },
-    );
-    if (!response.ok)
-      return res.status(response.status).send(await response.text());
-
-    const goStatus = (await response.json()) as GoStatusResponse;
-
-    res.json({
-      name: goStatus.name,
-      progress: goStatus.progress,
-      size: {
-        total: goStatus.total,
-        downloaded: goStatus.downloaded,
-        uploaded: goStatus.uploaded,
-      },
-      speed: {
-        down: goStatus.downSpeed,
-        up: goStatus.upSpeed,
-      },
-      time: {
-        remaining: 0,
-        elapsed: 0,
-      },
-      peers: {
-        seeders: goStatus.peers,
-        leechers: 0,
-        wires: goStatus.peers,
-      },
-      pieces: {
-        total: goStatus.pieces,
-        size: goStatus.pieceSize,
-      },
-      hash: goStatus.infoHash,
-      ready: goStatus.ready,
-      paused: false,
-      done: goStatus.progress === 1,
-    });
+    const status = await fetchMappedTorrentStatus(sessionId, hash);
+    if (!status.ok) {
+      return res.status(status.status).send(status.message);
+    }
+    res.json(status.payload);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     res.status(500).json({ error: message });
   }
+});
+
+app.get("/torrent/:hash/status/stream", async (req, res) => {
+  const { hash } = req.params;
+  const sessionId = getSessionId(req, res);
+
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream",
+    "Cache-Control": "no-cache",
+    Connection: "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+    "X-Accel-Buffering": "no",
+  });
+  res.flushHeaders();
+
+  activeStatusStreams++;
+  let closed = false;
+
+  const close = () => {
+    if (closed) return;
+    closed = true;
+    activeStatusStreams = Math.max(0, activeStatusStreams - 1);
+    clearInterval(statusTimer);
+    clearInterval(heartbeatTimer);
+  };
+
+  const sendStatus = async () => {
+    if (closed || res.writableEnded) return;
+    try {
+      const status = await fetchMappedTorrentStatus(sessionId, hash);
+      if (closed || res.writableEnded) return;
+      if (status.ok) {
+        res.write(`event: status\ndata: ${JSON.stringify(status.payload)}\n\n`);
+        return;
+      }
+
+      statusStreamFallbackHits++;
+      res.write(
+        `event: fallback\ndata: ${JSON.stringify({ status: status.status, message: status.message })}\n\n`,
+      );
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Unknown error";
+      statusStreamFallbackHits++;
+      res.write(
+        `event: fallback\ndata: ${JSON.stringify({ status: 500, message })}\n\n`,
+      );
+    }
+  };
+
+  const statusTimer = setInterval(sendStatus, STATUS_STREAM_INTERVAL_MS);
+  const heartbeatTimer = setInterval(() => {
+    if (closed || res.writableEnded) return;
+    res.write("event: heartbeat\ndata: {}\n\n");
+  }, STATUS_STREAM_HEARTBEAT_MS);
+
+  req.on("close", close);
+  res.on("close", close);
+  res.on("finish", close);
+
+  await sendStatus();
 });
 
 app.get("/torrent/:hash", async (req, res) => {
@@ -594,8 +693,12 @@ app.get("/stream/:hash/:fileId", async (req, res) => {
     // Create a fresh parser instance for each request to avoid state corruption
     // during parallel range requests, while delegating events to the shared meta.
     const meta = getOrCreateMetadata(sessionId, hash, fileId);
-    const parser = new Metadata(new MockWebTorrentFile(sessionId, hash, fileId) as any);
-    parser.on("subtitle", (s, t) => meta.emit("subtitle", s, t));
+    const parser = new Metadata(
+      new MockWebTorrentFile(sessionId, hash, fileId) as any,
+    );
+    parser.on("subtitle", (s: unknown, t: unknown) =>
+      meta.emit("subtitle", s, t),
+    );
 
     // intercept stream bytes and push them through parser
     interceptedStream = Readable.from(parser.parseStream(nodeStream));
