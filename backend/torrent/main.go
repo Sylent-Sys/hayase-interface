@@ -177,25 +177,39 @@ func getEnvBool(key string, fallback bool) bool {
 
 type statusCapturingResponseWriter struct {
 	http.ResponseWriter
-	status int
+	status      int
+	wroteHeader bool
 }
 
 func (w *statusCapturingResponseWriter) WriteHeader(status int) {
 	w.status = status
+	w.wroteHeader = true
 	w.ResponseWriter.WriteHeader(status)
+}
+
+func (w *statusCapturingResponseWriter) Write(p []byte) (int, error) {
+	if !w.wroteHeader {
+		w.status = http.StatusOK
+		w.wroteHeader = true
+	}
+	return w.ResponseWriter.Write(p)
 }
 
 func withRequestLogging(handlerName string, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
-		rw := &statusCapturingResponseWriter{ResponseWriter: w, status: http.StatusOK}
+		rw := &statusCapturingResponseWriter{ResponseWriter: w}
 		next(rw, r)
+		status := rw.status
+		if status == 0 {
+			status = http.StatusOK
+		}
 		logKV(
 			"request_complete",
 			"handler", handlerName,
 			"method", r.Method,
 			"path", r.URL.Path,
-			"status", rw.status,
+			"status", status,
 			"duration_ms", time.Since(start).Milliseconds(),
 		)
 	}
@@ -207,7 +221,7 @@ func logKV(message string, kv ...any) {
 		return
 	}
 	if len(kv)%2 != 0 {
-		kv = append(kv, "")
+		kv = append(kv, "<missing>")
 	}
 	parts := make([]string, 0, len(kv)/2)
 	for i := 0; i+1 < len(kv); i += 2 {

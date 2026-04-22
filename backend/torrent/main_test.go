@@ -47,6 +47,7 @@ func TestRegisterTorrentForSessionConcurrentCapacity(t *testing.T) {
 	var wg sync.WaitGroup
 	var successCount atomic.Int64
 	var capacityCount atomic.Int64
+	errCh := make(chan error, workers)
 
 	for i := 0; i < workers; i++ {
 		i := i
@@ -63,13 +64,17 @@ func TestRegisterTorrentForSessionConcurrentCapacity(t *testing.T) {
 			case err == errMaxTorrentCapacity:
 				capacityCount.Add(1)
 			default:
-				t.Errorf("unexpected registration error: %v", err)
+				errCh <- fmt.Errorf("unexpected registration error: %w", err)
 			}
 		}()
 	}
 
 	close(start)
 	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
+	}
 
 	stateMu.RLock()
 	defer stateMu.RUnlock()
@@ -95,6 +100,7 @@ func TestRegisterAndReleaseSharedHashConcurrent(t *testing.T) {
 	const sessionsCount = 80
 	startAdd := make(chan struct{})
 	var addWG sync.WaitGroup
+	addErrCh := make(chan error, sessionsCount)
 
 	for i := 0; i < sessionsCount; i++ {
 		i := i
@@ -104,13 +110,17 @@ func TestRegisterAndReleaseSharedHashConcurrent(t *testing.T) {
 			<-startAdd
 			sessionID := fmt.Sprintf("session-%d", i)
 			if err := registerTorrentForSession(sessionID, sharedHash, nil); err != nil {
-				t.Errorf("register failed for %s: %v", sessionID, err)
+				addErrCh <- fmt.Errorf("register failed for %s: %w", sessionID, err)
 			}
 		}()
 	}
 
 	close(startAdd)
 	addWG.Wait()
+	close(addErrCh)
+	for err := range addErrCh {
+		t.Fatal(err)
+	}
 
 	stateMu.RLock()
 	if got := len(torrentByHash); got != 1 {
@@ -125,6 +135,7 @@ func TestRegisterAndReleaseSharedHashConcurrent(t *testing.T) {
 
 	startRemove := make(chan struct{})
 	var removeWG sync.WaitGroup
+	removeErrCh := make(chan error, sessionsCount)
 	for i := 0; i < sessionsCount; i++ {
 		i := i
 		removeWG.Add(1)
@@ -133,13 +144,17 @@ func TestRegisterAndReleaseSharedHashConcurrent(t *testing.T) {
 			<-startRemove
 			sessionID := fmt.Sprintf("session-%d", i)
 			if ok := releaseTorrentForSession(sessionID, sharedHash); !ok {
-				t.Errorf("release failed for %s", sessionID)
+				removeErrCh <- fmt.Errorf("release failed for %s", sessionID)
 			}
 		}()
 	}
 
 	close(startRemove)
 	removeWG.Wait()
+	close(removeErrCh)
+	for err := range removeErrCh {
+		t.Fatal(err)
+	}
 
 	stateMu.RLock()
 	defer stateMu.RUnlock()
