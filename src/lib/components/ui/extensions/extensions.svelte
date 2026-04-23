@@ -1,5 +1,5 @@
 <script lang='ts'>
-  import Github from 'lucide-svelte/icons/github'
+  import GitBranch from 'lucide-svelte/icons/git-branch'
   import Globe from 'lucide-svelte/icons/globe'
   import Plus from 'lucide-svelte/icons/plus'
   import { toast } from 'svelte-sonner'
@@ -173,7 +173,7 @@
         <div class='bg-neutral-950 px-4 py-3 rounded-md flex flex-row space-x-3 justify-between items-center w-full'>
           <div class='flex space-x-2 items-center'>
             {#if url.protocol === 'gh:'}
-              <Github class='w-5 h-5 text-muted-foreground' />
+              <GitBranch class='w-5 h-5 text-muted-foreground' />
             {:else if url.protocol === 'npm:'}
               <svg class='w-5 h-5 text-muted-foreground' xmlns='http://www.w3.org/2000/svg' viewBox='0 0 128 128'><path fill='currentColor' d='M2 38.5h124v43.71H64v7.29H36.44v-7.29H2Zm6.89 36.43h13.78V53.07h6.89v21.86h6.89V45.79H8.89Zm34.44-29.14v36.42h13.78v-7.28h13.78V45.79Zm13.78 7.29H64v14.56h-6.89Zm20.67-7.29v29.14h13.78V53.07h6.89v21.86h6.89V53.07h6.89v21.86h6.89V45.79Z' /></svg>
             {:else}
