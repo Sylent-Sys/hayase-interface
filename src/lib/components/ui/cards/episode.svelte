@@ -13,13 +13,14 @@
   import { goto } from '$app/navigation'
   import { coverMedium, format, title } from '$lib/modules/anilist/util'
   import { list } from '$lib/modules/auth'
-  import { hover } from '$lib/modules/navigate'
+  import { hover, inputType } from '$lib/modules/navigate'
 
   export let media: Media
 
   export let trace: TraceAnime | undefined
 
   let hidden = true
+  $: mobile = $inputType === 'touch'
 
   function onclick () {
     goto(`/app/anime/${media.id}`)
@@ -28,12 +29,16 @@
     hidden = !state
   }
 
+  function closePreview () {
+    hidden = true
+  }
+
   $: status = list(media)
 </script>
 
-<div class='text-white p-4 cursor-pointer shrink-0 relative pointer-events-auto' class:z-40={!hidden} use:hover={[onclick, onhover]}>
+<div class='text-white p-4 cursor-pointer shrink-0 relative pointer-events-auto touch-manipulation' class:z-40={!hidden} use:hover={[onclick, onhover]}>
   {#if !hidden}
-    <PreviewCard {media} {trace} />
+    <PreviewCard {media} {trace} {mobile} onClose={closePreview} />
   {/if}
   <div class='item w-[16rem] flex flex-col'>
     <div class='h-[9rem]'>
