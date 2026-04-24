@@ -1,4 +1,6 @@
 <script lang='ts'>
+  import X from 'lucide-svelte/icons/x'
+
   import { BookmarkButton, FavoriteButton, PlayButton } from '../button/extra'
   import { Banner } from '../img'
   import Load from '../img/load.svelte'
@@ -14,16 +16,28 @@
   export let media: Media
 
   export let trace: TraceAnime | undefined = undefined
+  export let mobile = false
+  export let onClose: (() => void) | undefined
 
   let hideFrame: boolean | null = null
   function hide (e: CustomEvent<boolean>) {
     hideFrame = e.detail
   }
 
-  $: spoiler = $settings.hideSpoilers && ['CURRENT', 'PLANNING'].includes(list(media)!)
+  $: mediaListStatus = list(media)
+  $: spoiler = $settings.hideSpoilers && !!mediaListStatus && ['CURRENT', 'PLANNING'].includes(mediaListStatus)
 </script>
 
 <div class='!absolute w-[17.5rem] h-80 left-1/2 right-1/2 top-0 bottom-0 m-auto bg-neutral-950 z-30 rounded cursor-pointer absolute-container'>
+  {#if mobile && onClose}
+    <button
+      type='button'
+      class='absolute right-2 top-2 z-40 rounded-full bg-black/70 p-2 text-white backdrop-blur-sm transition-colors hover:bg-black/90 active:bg-black'
+      aria-label='Close preview'
+      on:click|stopPropagation={onClose}>
+      <X class='size-4' />
+    </button>
+  {/if}
   <div class='h-[45%] banner relative bg-black rounded-t'>
     {#if trace}
       {#if !SUPPORTS.isUnderPowered}

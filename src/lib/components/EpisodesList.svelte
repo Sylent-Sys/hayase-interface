@@ -51,7 +51,7 @@
 
 <Pagination count={episodeCount} {perPage} bind:currentPage let:pages let:hasNext let:hasPrev let:range let:setPage siblingCount={1}>
   <div class='overflow-y-auto pt-3 -ml-14 pl-14 -mr-3 pr-3 pointer-events-none -mb-3 pb-3' use:dragScroll>
-    <div class='grid grid-cols-1 sm:grid-cols-[repeat(auto-fit,minmax(500px,1fr))] place-items-center gap-x-4 gap-y-7 justify-center align-middle pointer-events-auto'>
+    <div class='grid grid-cols-1 sm:grid-cols-[repeat(auto-fit,minmax(500px,1fr))] place-items-center gap-x-4 gap-y-4 md:gap-y-7 justify-center align-middle pointer-events-auto'>
       {#each getPage(currentPage, episodeList) as { episode, image, title, summary, airingAt, airdate, filler, length, rating, runtime } (episode)}
         {@const watched = _progress >= episode && !completed}
         {@const target = _progress + 1 === episode}
@@ -60,7 +60,7 @@
         <div class={!target ? 'px-3 w-full' : 'contents'}>
           <div use:click={() => play(episode)}
             class={cn(
-              'select:scale-[1.05] select:shadow-lg scale-100 transition-[transform,box-shadow] duration-200 shrink-0 ease-out focus-visible:ring-ring focus-visible:ring-1 rounded-md bg-neutral-950 text-secondary-foreground select:bg-neutral-900 flex w-full max-h-28 cursor-pointer relative overflow-hidden group',
+              'select:scale-[1.05] select:shadow-lg scale-100 transition-[transform,box-shadow] duration-200 shrink-0 ease-out focus-visible:ring-ring focus-visible:ring-1 rounded-md bg-neutral-950 text-secondary-foreground select:bg-neutral-900 flex w-full md:max-h-28 max-h-none cursor-pointer relative overflow-hidden group touch-manipulation',
               target && 'ring-custom ring-1',
               filler && '!ring-yellow-400 ring-1'
             )}>
@@ -90,29 +90,31 @@
                 </div>
               </div>
             {/if}
-            <div class='flex-grow py-3 px-4 flex flex-col'>
-              <div class='font-bold mb-2 line-clamp-1 shrink-0 text-[12.8px]'>
+            <div class='flex-grow py-3 px-4 flex flex-col gap-1.5'>
+              <div class='font-bold line-clamp-2 md:line-clamp-1 shrink-0 text-[12.8px]'>
                 {episode}. {title?.en ?? 'Episode ' + episode}
               </div>
+              <!-- eslint-disable svelte/html-self-closing -->
               {#if watched || completed}
-                <div class='mb-2 h-0.5 overflow-hidden w-full bg-custom shrink-0' />
+                <div class='mb-2 h-0.5 overflow-hidden w-full bg-custom shrink-0'></div>
               {:else if $watchProgress?.episode === episode}
                 <div class='w-full bg-neutral-800 mb-2'>
-                  <div class='h-0.5 overflow-hidden bg-custom shrink-0' style:width={$watchProgress.progress + '%'} />
+                  <div class='h-0.5 overflow-hidden bg-custom shrink-0' style:width={$watchProgress.progress + '%'}></div>
                 </div>
               {/if}
-              <div class='text-[9.6px] text-muted-foreground overflow-hidden {spoiler && !underPoweredSpoiler && 'blur-[6px]'}'>
+              <div class='hidden md:block text-[9.6px] text-muted-foreground overflow-hidden {spoiler && !underPoweredSpoiler && 'blur-[6px]'}'>
                 {#if underPoweredSpoiler}
                   <div class='flex flex-col gap-2 pt-1'>
-                    <div class='bg-primary/5 size-full rounded h-1.5 w-60' />
-                    <div class='bg-primary/5 size-full rounded h-1.5 w-48' />
-                    <div class='bg-primary/5 size-full rounded h-1.5 w-24' />
+                    <div class='bg-primary/5 size-full rounded h-1.5 w-60'></div>
+                    <div class='bg-primary/5 size-full rounded h-1.5 w-48'></div>
+                    <div class='bg-primary/5 size-full rounded h-1.5 w-24'></div>
                   </div>
                 {:else}
                   {notes(summary ?? '')}
                 {/if}
               </div>
-              <div class='flex w-full justify-between mt-auto'>
+              <!-- eslint-enable svelte/html-self-closing -->
+              <div class='flex w-full justify-between mt-auto text-[9.6px] md:text-[10px]'>
                 {#if airingAt ?? airdate}
                   <div class='text-[9.6px] pt-2'>
                     {since(new Date(airingAt ?? airdate ?? 0))}

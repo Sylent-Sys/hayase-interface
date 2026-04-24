@@ -10,7 +10,7 @@
   import { Themes } from '$lib/components/ui/themes'
   import { authAggregator } from '$lib/modules/auth'
   import '@xyflow/svelte/dist/style.css'
-  import { breakpoints, cn } from '$lib/utils'
+  import { cn } from '$lib/utils'
 
   export let data: PageData
 
@@ -28,13 +28,13 @@
   let value: string
 </script>
 
-<Tabs.Root bind:value class='w-full' activateOnFocus={false} orientation={$breakpoints.xs ? 'horizontal' : 'vertical'}>
-  <div class='flex justify-center md:justify-start'>
-    <Tabs.List orientation={$breakpoints.xs ? 'horizontal' : 'vertical'}>
-      <Tabs.Trigger value='episodes' tabindex={0} class='px-8 data-[state=active]:bg-custom data-[state=active]:text-contrast data-[state=active]:font-bold'>Episodes</Tabs.Trigger>
-      <Tabs.Trigger value='relations' tabindex={0} class='px-8 data-[state=active]:bg-custom data-[state=active]:text-contrast data-[state=active]:font-bold'>Relations</Tabs.Trigger>
-      <Tabs.Trigger value='threads' tabindex={0} class='px-8 data-[state=active]:bg-custom data-[state=active]:text-contrast data-[state=active]:font-bold'>Threads</Tabs.Trigger>
-      <Tabs.Trigger value='themes' tabindex={0} class='px-8 data-[state=active]:bg-custom data-[state=active]:text-contrast data-[state=active]:font-bold'>Themes</Tabs.Trigger>
+<Tabs.Root bind:value class='w-full' activateOnFocus={false} orientation='horizontal'>
+  <div class='flex justify-center md:justify-start px-3 md:px-0'>
+    <Tabs.List orientation='horizontal' class='w-full max-w-full overflow-x-auto justify-start md:justify-center'>
+      <Tabs.Trigger value='episodes' tabindex={0} class='shrink-0 px-4 sm:px-8 data-[state=active]:bg-custom data-[state=active]:text-contrast data-[state=active]:font-bold'>Episodes</Tabs.Trigger>
+      <Tabs.Trigger value='relations' tabindex={0} class='shrink-0 px-4 sm:px-8 data-[state=active]:bg-custom data-[state=active]:text-contrast data-[state=active]:font-bold'>Relations</Tabs.Trigger>
+      <Tabs.Trigger value='threads' tabindex={0} class='shrink-0 px-4 sm:px-8 data-[state=active]:bg-custom data-[state=active]:text-contrast data-[state=active]:font-bold'>Threads</Tabs.Trigger>
+      <Tabs.Trigger value='themes' tabindex={0} class='shrink-0 px-4 sm:px-8 data-[state=active]:bg-custom data-[state=active]:text-contrast data-[state=active]:font-bold'>Themes</Tabs.Trigger>
     </Tabs.List>
   </div>
   <Tabs.Content value='episodes' tabindex={-1}>

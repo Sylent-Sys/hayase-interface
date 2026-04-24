@@ -1,12 +1,13 @@
 <script lang='ts'>
   import { goto } from '$app/navigation'
+  import { page } from '$app/stores'
   import SearchModal from '$lib/components/SearchModal.svelte'
   import { BannerImage } from '$lib/components/ui/banner'
   import { Player } from '$lib/components/ui/player'
   import { Sidebar } from '$lib/components/ui/sidebar'
   import Sidebarlist from '$lib/components/ui/sidebar/sidebarlist.svelte'
   import native from '$lib/modules/native'
-  import { transferToFileList } from '$lib/utils'
+  import { breakpoints, transferToFileList } from '$lib/utils'
 
   const NAVIGATE_TARGETS = {
     schedule: 'schedule',
@@ -24,6 +25,8 @@
   const imageRx = /\.(jpeg|jpg|gif|png|webp)/i
 
   const w2gRx = /hayas.?ee?(?:(?:\.watch)|(?::\/))?\/w2g\/(.+)/
+
+  $: hideSidebarOnPlayer = $page.route.id === '/app/player' && !$breakpoints.md
 
   async function handleTransfer (e: { dataTransfer?: DataTransfer | null, clipboardData?: DataTransfer | null } & Event) {
     for (const file of await transferToFileList(e)) {
@@ -48,9 +51,11 @@
 <BannerImage class='absolute top-0 left-0 -z-[1]' />
 <SearchModal />
 <div class='flex flex-row grow h-full overflow-clip group/fullscreen min-h-0' id='episodeListTarget'>
-  <Sidebar>
-    <Sidebarlist />
-  </Sidebar>
+  {#if !hideSidebarOnPlayer}
+    <Sidebar>
+      <Sidebarlist />
+    </Sidebar>
+  {/if}
   <Player />
   <slot />
 </div>
